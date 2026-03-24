@@ -9,6 +9,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## 2026-03-24 — v1.3.1 — Shift-key slider preview during edit mode
+
+### Added
+- **Shift-key preview** (`lpc-editor.js`, `lpc-slider.js`): while the editor panel is open, holding Shift temporarily re-activates the slider divider so the user can drag it to preview how the current pan/zoom settings look at any divider position. Releasing Shift returns the pointer back to drag-to-pan mode. A `lpc-compare--shift-preview` class is toggled on keydown/keyup to drive cursor feedback.
+- **Shift-preview cursor** (`lpc-editor.css`): `col-resize` (horizontal) or `row-resize` (vertical) cursor applied when shift-preview is active, replacing the `grab` cursor, to visually indicate the divider is draggable.
+
+### Changed
+- `lpc-slider.js` `onPointerDown`: editing-mode bail now checks `&& !e.shiftKey` so the divider drag fires through when Shift is held.
+- `lpc-editor.js` drag `pointerdown`: bails early when `e.shiftKey` is set, yielding to the slider divider handler.
+
 ## 2026-03-24 — v1.3.0 — Drag-to-pan + mouse-wheel zoom in editor
 
 ### Added

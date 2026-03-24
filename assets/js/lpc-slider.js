@@ -109,8 +109,9 @@
             if ( e.target.closest( '.lpc-editor-panel' ) || e.target.closest( '.lpc-edit-toggle' ) ) {
                 return;
             }
-            // When the editor panel is open let it handle pointer events exclusively.
-            if ( el.classList.contains( 'lpc-compare--editing' ) ) {
+            // When the editor panel is open, allow slider drag only while Shift is held
+            // (live preview mode). Without Shift, panning/zoom owns the pointer events.
+            if ( el.classList.contains( 'lpc-compare--editing' ) && ! e.shiftKey ) {
                 return;
             }
             dragging = true;

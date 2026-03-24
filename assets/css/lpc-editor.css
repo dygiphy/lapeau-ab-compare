@@ -327,6 +327,14 @@
     cursor: grab;
 }
 
+/* Shift held: slider divider drag is active for live preview. */
+.lpc-compare--editing.lpc-compare--shift-preview {
+    cursor: col-resize;
+}
+.lpc-compare--editing.lpc-compare--vertical.lpc-compare--shift-preview {
+    cursor: row-resize;
+}
+
 .lpc-compare--panning-active {
     cursor: grabbing !important;
 }

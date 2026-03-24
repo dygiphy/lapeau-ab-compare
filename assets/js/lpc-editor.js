@@ -332,6 +332,10 @@
             if ( e.target.closest( '.lpc-edit-toggle' ) ) {
                 return;
             }
+            // Yield to slider divider drag while Shift is held (preview mode).
+            if ( e.shiftKey ) {
+                return;
+            }
             var s    = state[ activeSide ];
             var norm = ( ( s.rotate % 360 ) + 360 ) % 360;
             // Only initiate pan when there is room to pan and rotation allows it.
@@ -378,6 +382,23 @@
 
         slider.addEventListener( 'pointerup',     endDrag );
         slider.addEventListener( 'pointercancel', endDrag );
+
+        // -- Shift-key preview -----------------------------------------------
+        //
+        // While Shift is held the slider divider becomes draggable again so the
+        // editor can preview position changes live. A class drives the cursor.
+
+        window.addEventListener( 'keydown', function ( e ) {
+            if ( e.key === 'Shift' && panel.classList.contains( 'lpc-editor-panel--open' ) ) {
+                slider.classList.add( 'lpc-compare--shift-preview' );
+            }
+        } );
+
+        window.addEventListener( 'keyup', function ( e ) {
+            if ( e.key === 'Shift' ) {
+                slider.classList.remove( 'lpc-compare--shift-preview' );
+            }
+        } );
 
         // -- Mouse-wheel zoom -----------------------------------------------------
         //
