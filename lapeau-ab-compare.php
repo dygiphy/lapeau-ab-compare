@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Lapeau A/B Compare
  * Description: Lightweight before/after image comparison slider with inline WYSIWYG positioning editor for logged-in users.
- * Version:     1.2.0
+ * Version:     1.3.0
  * Author:      Dygiphy
  * Text Domain: lapeau-ab-compare
  *
@@ -25,7 +25,7 @@ defined( 'ABSPATH' ) || exit;
 final class Lapeau_AB_Compare {
 
     /** @var string Plugin version. */
-    const VERSION = '1.2.0';
+    const VERSION = '1.3.0';
 
     /** @var string Shortcode tag. */
     const SHORTCODE = 'lpc_compare';

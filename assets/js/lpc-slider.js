@@ -9,7 +9,7 @@
  * dispatched by the editor.
  *
  * @package Lapeau_AB_Compare
- * @version 1.2.0
+ * @version 1.3.0
  */
 ( function () {
     'use strict';
@@ -107,6 +107,10 @@
 
         function onPointerDown( e ) {
             if ( e.target.closest( '.lpc-editor-panel' ) || e.target.closest( '.lpc-edit-toggle' ) ) {
+                return;
+            }
+            // When the editor panel is open let it handle pointer events exclusively.
+            if ( el.classList.contains( 'lpc-compare--editing' ) ) {
                 return;
             }
             dragging = true;

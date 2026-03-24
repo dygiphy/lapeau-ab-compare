@@ -9,7 +9,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## 2026-03-24 — v1.2.0 — Composite mode + site-wide migration
+## 2026-03-24 — v1.3.0 — Drag-to-pan + mouse-wheel zoom in editor
+
+### Added
+- **Drag-to-pan** (`lpc-editor.js`): when the editor panel is open, dragging anywhere on the image container pans the active side's image in real time. Uses pointer capture so tracking continues even when the cursor briefly leaves the element. Pan deltas are clamped to the coverage-safe range (`maxPanForScale`). Disabled when scale is 1 (no room to pan) or when rotation is 90°/270°. Panel controls sync live during drag.
+- **Mouse-wheel zoom** (`lpc-editor.js`): scrolling the mouse wheel over the slider when the editor is open adjusts the active side's zoom by ±0.05 per tick, clamped to [1, 3]. Pan is re-clamped after each zoom step to prevent uncovering the container edge. All panel controls update in sync.
+- **Edit-mode cursor** (`lpc-editor.css`): the slider shows a `grab` cursor when the editor panel is open; switches to `grabbing` while actively dragging.
+
+### Changed
+- `lpc-slider.js` `onPointerDown`: bails early when the slider has the `lpc-compare--editing` class, preventing the divider from moving while the editor is controlling pointer events.
+- Version bumped to 1.3.0.
 
 ### Added
 - **Composite mode** (`lapeau-ab-compare.php`, `lpc-slider.css`): new `composite="url"` shortcode attribute accepts a single side-by-side image (left = before, right = after). Plugin sets both slots to the same URL and adds `lpc-compare--composite` class + `data-composite="1"` attribute. CSS positions before image to show left half and after image to show right half via `object-fit: fill; width: 200%` with opposing `left`/`right` anchors.

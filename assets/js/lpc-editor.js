@@ -13,7 +13,7 @@
  *     axes are swapped by the rotation).
  *
  * @package Lapeau_AB_Compare
- * @version 1.2.0
+ * @version 1.3.0
  */
 ( function () {
     'use strict';
@@ -312,6 +312,104 @@
         } );
 
         // â”€â”€ Reset â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // -- Drag-to-pan on the slider container ----------------------------------
+        //
+        // When the editor panel is open, dragging anywhere on the image container
+        // pans the active side's image. Pointer capture keeps tracking smooth even
+        // when the cursor leaves the element during a fast drag.
+
+        var dragActive = false;
+        var dragLastX  = 0;
+        var dragLastY  = 0;
+
+        slider.addEventListener( 'pointerdown', function ( e ) {
+            if ( ! panel.classList.contains( 'lpc-editor-panel--open' ) ) {
+                return;
+            }
+            if ( e.button !== 0 ) {
+                return;
+            }
+            if ( e.target.closest( '.lpc-edit-toggle' ) ) {
+                return;
+            }
+            var s    = state[ activeSide ];
+            var norm = ( ( s.rotate % 360 ) + 360 ) % 360;
+            // Only initiate pan when there is room to pan and rotation allows it.
+            if ( norm === 90 || norm === 270 || maxPanForScale( s.scale ) === 0 ) {
+                return;
+            }
+            dragActive = true;
+            dragLastX  = e.clientX;
+            dragLastY  = e.clientY;
+            slider.setPointerCapture( e.pointerId );
+            slider.classList.add( 'lpc-compare--panning-active' );
+            e.preventDefault();
+        } );
+
+        slider.addEventListener( 'pointermove', function ( e ) {
+            if ( ! dragActive ) {
+                return;
+            }
+            var s    = state[ activeSide ];
+            var rect = slider.getBoundingClientRect();
+            var dx   = e.clientX - dragLastX;
+            var dy   = e.clientY - dragLastY;
+            dragLastX = e.clientX;
+            dragLastY = e.clientY;
+
+            var mp   = maxPanForScale( s.scale );
+            s.offsetX = clamp( s.offsetX + ( dx / rect.width  * 100 ), -mp, mp );
+            s.offsetY = clamp( s.offsetY + ( dy / rect.height * 100 ), -mp, mp );
+
+            els.panX.value = s.offsetX;
+            els.panXVal.textContent = s.offsetX.toFixed( 1 ) + '%';
+            els.panY.value = s.offsetY;
+            els.panYVal.textContent = s.offsetY.toFixed( 1 ) + '%';
+            applyTransform( activeSide );
+        } );
+
+        function endDrag() {
+            if ( ! dragActive ) {
+                return;
+            }
+            dragActive = false;
+            slider.classList.remove( 'lpc-compare--panning-active' );
+        }
+
+        slider.addEventListener( 'pointerup',     endDrag );
+        slider.addEventListener( 'pointercancel', endDrag );
+
+        // -- Mouse-wheel zoom -----------------------------------------------------
+        //
+        // Scrolling over the slider when the editor is open zooms the active image.
+        // Each wheel tick adjusts scale by +/-0.05, clamped to [1, 3].
+
+        slider.addEventListener( 'wheel', function ( e ) {
+            if ( ! panel.classList.contains( 'lpc-editor-panel--open' ) ) {
+                return;
+            }
+            e.preventDefault();
+
+            var s     = state[ activeSide ];
+            var delta = e.deltaY > 0 ? -0.05 : 0.05;
+            s.scale   = parseFloat( clamp( s.scale + delta, 1, 3 ).toFixed( 2 ) );
+
+            els.zoom.value = s.scale;
+            els.zoomVal.textContent = s.scale.toFixed( 2 ) + 'x';
+
+            // Pan bounds change with scale -- clamp and sync controls.
+            enforceCoverage( s );
+            var mp = maxPanForScale( s.scale );
+            els.panX.min = -mp; els.panX.max = mp;
+            els.panY.min = -mp; els.panY.max = mp;
+            els.panX.value = s.offsetX;
+            els.panXVal.textContent = s.offsetX.toFixed( 1 ) + '%';
+            els.panY.value = s.offsetY;
+            els.panYVal.textContent = s.offsetY.toFixed( 1 ) + '%';
+
+            applyTransform( activeSide );
+        }, { passive: false } );
+
         els.resetBtn.addEventListener( 'click', function () {
             state[ activeSide ] = { scale: 1, offsetX: 0, offsetY: 0, rotate: 0 };
             syncControlsToState();

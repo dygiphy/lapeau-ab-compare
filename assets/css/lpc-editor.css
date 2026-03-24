@@ -6,7 +6,7 @@
  * manipulating the same CSS properties the public view uses.
  *
  * @package Lapeau_AB_Compare
- * @version 1.2.0
+ * @version 1.3.0
  */
 
 /* ----------------------------------------------------------------
@@ -320,6 +320,11 @@
 
 .lpc-compare--panning {
     cursor: grab !important;
+}
+
+/* In edit mode the whole slider surface is a drag target. */
+.lpc-compare--editing {
+    cursor: grab;
 }
 
 .lpc-compare--panning-active {
