@@ -12,7 +12,7 @@ Standalone WordPress plugin providing the `[lpc_compare]` shortcode for before/a
 | **Shortcode** | `[lpc_compare]` |
 | **Post meta key** | `_lpc_transforms` |
 | **AJAX action** | `lpc_save_transform` (nonce action: `lpc_save`) |
-| **Current version** | 1.2.0 |
+| **Current version** | 1.4.0 |
 | **Minimum PHP** | 7.4 |
 | **Tested WP** | 6.9+ |
 
@@ -53,6 +53,7 @@ lapeau-ab-compare/
 | `after_label` | After | Badge label shown over after side. |
 | `direction` | horizontal | `horizontal` or `vertical`. |
 | `ratio` | 4/3 | CSS aspect-ratio of the container (e.g. `16/9`, `3/4`, `1/1`). Overridden by saved meta. |
+| `width` | — | Optional container width override (e.g. `80%`, `400px`). Centres the slider when less than 100%. Overridden by saved meta. |
 | `start` | 50 | Initial divider position 0–100. |
 
 ---
@@ -62,15 +63,16 @@ lapeau-ab-compare/
 ```
 _lpc_transforms = [
     'slider-id' => [
-        'before' => [ 'scale' => 1.0, 'offsetX' => 0.0, 'offsetY' => 0.0, 'rotate' => 0.0, 'url' => '' ],
+        'before' => [ 'scale' => 1.0, 'offsetX' => 0.0, 'offsetY' => 0.0, 'rotate' => 0.0, 'url' => '', 'attachment_id' => 0 ],
         'after'  => [ ... same ... ],
         'ratio'  => '4/3',
+        'width'  => '80%',
     ],
     ...
 ]
 ```
 
-Saved ratio overrides the shortcode `ratio` attribute. A `url` key overrides the shortcode image URL for that side.
+Saved ratio and width override shortcode attributes. A `url` key overrides the shortcode image URL for that side; `attachment_id` caches the WP media ID to avoid `attachment_url_to_postid()` DB queries on subsequent renders.
 
 ---
 

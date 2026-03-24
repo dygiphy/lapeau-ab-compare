@@ -6,7 +6,7 @@
  * manipulating the same CSS properties the public view uses.
  *
  * @package Lapeau_AB_Compare
- * @version 1.3.0
+ * @version 1.4.1
  */
 
 /* ----------------------------------------------------------------
@@ -407,6 +407,41 @@
 
 .lpc-ratio-custom:focus {
     outline: none;
+    border-color: #7c7cf7;
+    color: #fff;
+}
+
+/* ----------------------------------------------------------------
+   Width control
+   ---------------------------------------------------------------- */
+
+.lpc-width-presets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 6px;
+}
+
+.lpc-width-btn {
+    padding: 3px 8px;
+    border: 1px solid #555;
+    border-radius: 3px;
+    background: #2a2a2a;
+    color: #ccc;
+    font-size: 10px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+    white-space: nowrap;
+}
+
+.lpc-width-btn:hover {
+    background: #3a3a3a;
+    border-color: #888;
+    color: #fff;
+}
+
+.lpc-width-btn--active {
+    background: #5555cc;
     border-color: #7c7cf7;
     color: #fff;
 }

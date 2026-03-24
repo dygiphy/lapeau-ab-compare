@@ -13,7 +13,7 @@
  *     axes are swapped by the rotation).
  *
  * @package Lapeau_AB_Compare
- * @version 1.3.0
+ * @version 1.4.1
  */
 ( function () {
     'use strict';
@@ -22,6 +22,9 @@
 
     /** Preset aspect ratios shown as toggles. */
     var RATIO_PRESETS = [ '1/1', '4/3', '3/4', '16/9', '9/16' ];
+
+    /** Preset container widths shown as toggles (percentage values). */
+    var WIDTH_PRESETS = [ '100%', '80%', '60%', '50%', '40%' ];
 
     /**
      * Clamp a number between min and max.
@@ -110,6 +113,7 @@
 
         var activeSide   = 'before';
         var currentRatio = ( slider.style.aspectRatio || '4/3' ).replace( /\s/g, '' );
+        var currentWidth = slider.dataset.lpcWidth || '';
 
         // Read any saved transforms already rendered as inline styles.
         parseExistingTransform( slider.querySelector( '.lpc-img--before' ), state.before );
@@ -156,7 +160,10 @@
             dirV:       panel.querySelector( '[data-dir="vertical"]'   ),
             saving:     panel.querySelector( '.lpc-saving-indicator'   ),
             ratioInput: panel.querySelector( '.lpc-ratio-custom'       ),
-            ratioBtns:  panel.querySelectorAll( '[data-ratio]'         )
+            ratioBtns:  panel.querySelectorAll( '[data-ratio]'         ),
+            widthRange: panel.querySelector( '.lpc-range-width'  ),
+            widthVal:   panel.querySelector( '.lpc-val-width'    ),
+            widthBtns:  panel.querySelectorAll( '[data-width]'   )
         };
 
         // â”€â”€ Toggle open/close â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -503,6 +510,63 @@
         } );
 
         // â”€â”€ Media library â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+        // -- Container width -------------------------------------------------------
+
+        /**
+         * Sync the active state on width preset buttons.
+         */
+        function updateWidthBtnState() {
+            var active = currentWidth || '100%';
+            els.widthBtns.forEach( function ( btn ) {
+                btn.classList.toggle( 'lpc-width-btn--active', btn.dataset.width === active );
+            } );
+        }
+
+        /**
+         * Apply a CSS width value to the slider container (WYSIWYG) and sync controls.
+         *
+         * Passing '100%' or an empty string restores the native 100% width.
+         *
+         * @param {string} widthVal - CSS width value (e.g. '80%') or '' for default.
+         */
+        function applyWidth( widthVal ) {
+            // Normalise '100%' to '' so the default renders without an inline override.
+            currentWidth = ( widthVal === '100%' ) ? '' : widthVal;
+            if ( ! currentWidth ) {
+                slider.style.width       = '';
+                slider.style.marginLeft  = '';
+                slider.style.marginRight = '';
+            } else {
+                slider.style.width       = currentWidth;
+                slider.style.marginLeft  = 'auto';
+                slider.style.marginRight = 'auto';
+            }
+            var displayVal = currentWidth || '100%';
+            els.widthVal.textContent = displayVal;
+            if ( /^\d+%$/.test( displayVal ) ) {
+                els.widthRange.value = parseInt( displayVal, 10 );
+            }
+            updateWidthBtnState();
+            // Reposition editor panel since slider width may have changed.
+            setTimeout( positionPanel, 50 );
+        }
+
+        // Initialise width controls from current slider DOM state.
+        var initWidthPct = /^\d+%$/.test( currentWidth ) ? parseInt( currentWidth, 10 ) : 100;
+        els.widthRange.value     = initWidthPct;
+        els.widthVal.textContent = currentWidth || '100%';
+        updateWidthBtnState();
+
+        els.widthRange.addEventListener( 'input', function () {
+            applyWidth( els.widthRange.value + '%' );
+        } );
+
+        els.widthBtns.forEach( function ( btn ) {
+            btn.addEventListener( 'click', function () {
+                applyWidth( btn.dataset.width );
+            } );
+        } );
         els.mediaBtn.addEventListener( 'click', function () {
             if ( ! window.wp || ! window.wp.media ) {
                 return;
@@ -517,7 +581,9 @@
                 var img = slider.querySelector( '.lpc-img--' + activeSide );
                 if ( img ) {
                     img.src = attachment.url;
+                    img.removeAttribute( 'srcset' );   // Clear stale srcset; regenerated after save + reload.
                     slider.dataset[ activeSide + 'Url' ] = attachment.url;
+                    slider.dataset[ activeSide + 'Id'  ] = attachment.id;   // Store ID for server-side srcset.
                 }
             } );
             frame.open();
@@ -531,7 +597,7 @@
         } );
 
         /**
-         * POST one side's transform data (plus ratio) to the AJAX endpoint.
+         * POST one side's transform data (plus ratio and width) to the AJAX endpoint.
          *
          * @param {string}   side     - "before" or "after".
          * @param {Function} callback - Called on XHR load.
@@ -552,10 +618,16 @@
             data.append( 'offsetY',   s.offsetY );
             data.append( 'rotate',    s.rotate  );
             data.append( 'ratio',     currentRatio );
+            data.append( 'width',     currentWidth );  // Empty string clears saved width.
 
             var imgUrl = slider.dataset[ side + 'Url' ] || '';
             if ( imgUrl ) {
                 data.append( 'image_url', imgUrl );
+            }
+
+            var imgId = parseInt( slider.dataset[ side + 'Id' ] || '0', 10 );
+            if ( imgId ) {
+                data.append( 'image_id', imgId );   // Avoids URL lookup on next render.
             }
 
             var xhr = new XMLHttpRequest();
@@ -612,6 +684,10 @@
             return '<button type="button" class="lpc-ratio-btn" data-ratio="' + r + '">' + r.replace( '/', ':' ) + '</button>';
         } ).join( '' );
 
+        var widthPresetBtns = WIDTH_PRESETS.map( function ( w ) {
+            return '<button type="button" class="lpc-width-btn" data-width="' + w + '">' + w + '</button>';
+        } ).join( '' );
+
         return (
             '<div class="lpc-editor-header">' +
                 '<span class="lpc-editor-title">Image positioning</span>' +
@@ -661,6 +737,15 @@
                         '<div class="lpc-ratio-presets">' + presetBtns + '</div>' +
                         '<input type="text" class="lpc-ratio-custom" placeholder="e.g. 5/4" maxlength="9">' +
                     '</div>' +
+                '</div>' +
+
+                '<div class="lpc-control lpc-control--full">' +
+                    '<label>Container width</label>' +
+                    '<div class="lpc-control-row">' +
+                        '<input type="range" class="lpc-range-width" min="20" max="100" step="5" value="100">' +
+                        '<span class="lpc-control-value lpc-val-width">100%</span>' +
+                    '</div>' +
+                    '<div class="lpc-width-presets">' + widthPresetBtns + '</div>' +
                 '</div>' +
 
                 '<div class="lpc-control lpc-control--full">' +

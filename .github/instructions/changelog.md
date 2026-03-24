@@ -9,6 +9,39 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## 2026-03-25 — v1.4.1 — srcset URL fix + badge fade on divider
+
+### Fixed
+- **srcset not rendering** (`lapeau-ab-compare.php`): `attachment_url_to_postid()` requires a fully-qualified URL but page content commonly uses root-relative paths (e.g. `/wp-content/uploads/…`). `render_img()` now detects URLs without a scheme and prefixes them with `home_url()` before the lookup. The original URL is still used for the `src` output; only the internal lookup is resolved to absolute.
+
+### Added
+- **Badge fade on divider position** (`lpc-slider.js`, `lpc-slider.css`): as the slider divider passes the midpoint, the badge for the minority side (less than 50% visible area) fades out smoothly, reaching minimum opacity 0.25 at the extreme. This reinforces which image is dominant without hiding the label entirely. The dominant side’s badge stays at full opacity. A CSS `transition: opacity 0.2s ease` on `.lpc-badge` makes the fade smooth during drag. Both horizontal and vertical directions use the same `position` value so the logic is direction-agnostic.
+- Badge element references (`badgeBefore`, `badgeAfter`) cached at init alongside existing element refs.
+
+### Changed
+- `applyPosition()` docblock updated to describe badge behaviour.
+- Version bumped to 1.4.1 across all 5 files.
+
+ — Responsive images (srcset) + container width control
+
+### Added
+- **Responsive image markup** (`lapeau-ab-compare.php`): new `render_img()` private method generates `srcset` and `sizes` attributes for each slider image. Uses `attachment_url_to_postid()` to resolve the attachment ID from the URL, then `wp_get_attachment_image_srcset( $id, 'full' )` to emit all registered image sizes. Falls back to plain `src`-only markup when the attachment cannot be resolved. Uses `'large'` size (≤1024 px) as the default `src` to avoid loading full-res on non-srcset browsers.
+- **Per-request ID cache** (`lapeau-ab-compare.php`): static `$id_cache` array in `render_img()` avoids redundant `attachment_url_to_postid()` DB queries for repeated URLs (composite mode, multiple shortcodes sharing images).
+- **`compute_sizes()` helper** (`lapeau-ab-compare.php`): computes a CSS `sizes` attribute value from the saved container width and composite flag. Returns `100vw` (default), `{N}vw` (percent width), or `(max-width: Xpx) 100vw, Xpx` (px width). Doubles the value for composite mode (image stretches to 200%).
+- **Attachment ID persistence** (`lapeau-ab-compare.php`, `lpc-editor.js`): AJAX save now accepts and stores `image_id` (attachment ID) per side in post meta as `attachment_id`. Used on next render to skip URL lookup entirely.
+- **Container width shortcode attribute** (`lapeau-ab-compare.php`): new `width` attribute (e.g. `width="80%"` or `width="400px"`). Saved meta overrides the shortcode attribute. Validated by regex before use.
+- **Width override in rendered markup** (`lapeau-ab-compare.php`): when a width is set, the container gets `style="aspect-ratio: …; width: X; margin-left: auto; margin-right: auto;"` and `data-lpc-width="X"` so the editor can initialise from it.
+- **Width control in editor panel** (`lpc-editor.js`, `lpc-editor.css`): new `Container width` section in the panel with a range slider (20–100%, step 5) and five preset buttons (100%, 80%, 60%, 50%, 40%). Manipulates the actual `slider.style.width` and `marginLeft`/`marginRight` for true WYSIWYG positioning. `applyWidth()` drives all updates; panel repositions after width changes via `positionPanel()`.
+- **Width preset button styles** (`lpc-editor.css`): `.lpc-width-btn` and `.lpc-width-btn--active` classes matching the existing ratio-button appearance.
+- **`WIDTH_PRESETS` constant** (`lpc-editor.js`): array of five preset width strings consumed by `buildPanelHTML()`.
+
+### Changed
+- `saveSide()` (`lpc-editor.js`): now appends `width` (empty string = clear override) and `image_id` (when a new image was picked from media library) to the AJAX FormData.
+- `ajax_save_transform()` (`lapeau-ab-compare.php`): handles new `image_id` (per-side `attachment_id` in meta) and `width` (slider-level; empty string unsets the saved key) POST params.
+- Media picker `select` handler (`lpc-editor.js`): clears stale `srcset` attribute on the `<img>` element (`img.removeAttribute('srcset')`) and stores `attachment.id` as `data-{side}Id` on the slider for the next save.
+- `render()` (`lapeau-ab-compare.php`): **bug fix** — saved `url` overrides from post meta are now applied before the shortcode URL variables are finalised. Previously, the stored URL replacement was saved to meta but never read back during render.
+- Version bumped to 1.4.0 across all 5 files.
+
 ## 2026-03-24 — v1.3.1 — Shift-key slider preview during edit mode
 
 ### Added

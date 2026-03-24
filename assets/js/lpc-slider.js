@@ -9,7 +9,7 @@
  * dispatched by the editor.
  *
  * @package Lapeau_AB_Compare
- * @version 1.3.0
+ * @version 1.4.1
  */
 ( function () {
     'use strict';
@@ -32,11 +32,13 @@
      * @param {HTMLElement} el - The .lpc-compare container.
      */
     function initSlider( el ) {
-        var position  = parseFloat( el.dataset.start ) || 50;
-        var beforeEl  = el.querySelector( '.lpc-before' );
-        var dividerEl = el.querySelector( '.lpc-divider' );
-        var handle    = dividerEl ? dividerEl.querySelector( '.lpc-handle' ) : null;
-        var dragging  = false;
+        var position    = parseFloat( el.dataset.start ) || 50;
+        var beforeEl    = el.querySelector( '.lpc-before' );
+        var dividerEl   = el.querySelector( '.lpc-divider' );
+        var handle      = dividerEl ? dividerEl.querySelector( '.lpc-handle' ) : null;
+        var badgeBefore = el.querySelector( '.lpc-badge--before' );
+        var badgeAfter  = el.querySelector( '.lpc-badge--after' );
+        var dragging    = false;
 
         if ( ! beforeEl || ! dividerEl ) {
             return;
@@ -68,9 +70,12 @@
         }
 
         /**
-         * Apply the current divider position to clip-path and divider offset.
-         * Clears the opposite-axis inline style to prevent stale values when
-         * direction switches.
+         * Apply the current divider position to clip-path, divider offset, and badge opacity.
+         *
+         * Badge UCD rule: the badge labelling the minority (less-visible) side fades out
+         * as it falls below 50% visible area, so users always know which side they see more of.
+         * Minimum opacity 0.25 keeps the label discoverable at extremes.
+         * Clip and divider are always updated; opposite-axis style is cleared on direction switch.
          */
         function applyPosition() {
             if ( isVertical() ) {
@@ -84,6 +89,13 @@
             }
             if ( handle ) {
                 handle.setAttribute( 'aria-valuenow', String( Math.round( position ) ) );
+            }
+            // Fade whichever badge is on the minority (smaller) side.
+            if ( badgeBefore ) {
+                badgeBefore.style.opacity = position >= 50 ? '1' : String( Math.max( 0.25, position / 50 ) );
+            }
+            if ( badgeAfter ) {
+                badgeAfter.style.opacity = position <= 50 ? '1' : String( Math.max( 0.25, ( 100 - position ) / 50 ) );
             }
         }
 

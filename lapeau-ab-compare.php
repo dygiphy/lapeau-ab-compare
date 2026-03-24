@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Lapeau A/B Compare
  * Description: Lightweight before/after image comparison slider with inline WYSIWYG positioning editor for logged-in users.
- * Version:     1.3.0
+ * Version:     1.4.1
  * Author:      Dygiphy
  * Text Domain: lapeau-ab-compare
  *
@@ -25,7 +25,7 @@ defined( 'ABSPATH' ) || exit;
 final class Lapeau_AB_Compare {
 
     /** @var string Plugin version. */
-    const VERSION = '1.3.0';
+    const VERSION = '1.4.1';
 
     /** @var string Shortcode tag. */
     const SHORTCODE = 'lpc_compare';
@@ -165,6 +165,7 @@ final class Lapeau_AB_Compare {
             'direction'    => 'horizontal',
             'ratio'        => '4/3',
             'start'        => '50',
+            'width'        => '',   // Optional container width override, e.g. '80%' or '400px'.
         ], $atts, self::SHORTCODE );
 
         // Composite mode: a single side-by-side image (left = before, right = after).
@@ -186,18 +187,40 @@ final class Lapeau_AB_Compare {
         $ratio     = preg_match( '#^\d+/\d+$#', $atts['ratio'] ) ? $atts['ratio'] : '4/3';
 
         // Resolve saved transforms from post meta.
-        // A saved ratio overrides the shortcode ratio attribute.
         $transforms = $this->get_transforms( $id );
+
+        // Apply saved URL overrides from meta — these take precedence over shortcode attributes.
+        if ( ! empty( $transforms['before']['url'] ) ) {
+            $atts['before'] = $transforms['before']['url'];
+        }
+        if ( ! empty( $transforms['after']['url'] ) ) {
+            $atts['after'] = $transforms['after']['url'];
+        }
+
+        // A saved ratio overrides the shortcode ratio attribute.
         if ( ! empty( $transforms['ratio'] ) && preg_match( '#^\d+/\d+$#', $transforms['ratio'] ) ) {
             $ratio = $transforms['ratio'];
         }
+
+        // A saved width overrides the shortcode width attribute.
+        $width = '';
+        if ( ! empty( $transforms['width'] ) && preg_match( '#^\d+(\.\d+)?(px|%)$#', $transforms['width'] ) ) {
+            $width = $transforms['width'];
+        } elseif ( ! empty( $atts['width'] ) && preg_match( '#^\d+(\.\d+)?(px|%)$#', $atts['width'] ) ) {
+            $width = $atts['width'];
+        }
+
+        // Pre-resolved attachment IDs speed up srcset generation on render.
+        $before_attachment_id = ! empty( $transforms['before']['attachment_id'] ) ? (int) $transforms['before']['attachment_id'] : 0;
+        $after_attachment_id  = ! empty( $transforms['after']['attachment_id']  ) ? (int) $transforms['after']['attachment_id']  : 0;
+
         $before_style = $this->build_img_style( $transforms['before'] ?? [] );
         $after_style  = $this->build_img_style( $transforms['after'] ?? [] );
 
-        $before_url = esc_url( $atts['before'] );
-        $after_url  = esc_url( $atts['after'] );
-        $before_alt = esc_attr( $atts['before_alt'] );
-        $after_alt  = esc_attr( $atts['after_alt'] );
+        $before_url = $atts['before'];
+        $after_url  = $atts['after'];
+        $before_alt = $atts['before_alt'];
+        $after_alt  = $atts['after_alt'];
         $before_lbl = esc_html( $atts['before_label'] );
         $after_lbl  = esc_html( $atts['after_label'] );
 
@@ -210,35 +233,37 @@ final class Lapeau_AB_Compare {
         $composite_class  = $is_composite ? ' lpc-compare--composite' : '';
         $composite_attr   = $is_composite ? ' data-composite="1"' : '';
 
+        // Build container style with aspect ratio and optional width override.
+        $container_style = 'aspect-ratio: ' . $ratio . ';';
+        if ( $width ) {
+            $container_style .= ' width: ' . $width . '; margin-left: auto; margin-right: auto;';
+        }
+
+        // Compute srcset sizes hint based on container width and composite mode.
+        $sizes = $this->compute_sizes( $width, $is_composite );
+
         // Build the markup — minimal nesting.
         $html  = '<div class="lpc-compare lpc-compare--' . $direction . $composite_class . '"';
         $html .= ' id="' . $id . '"';
         $html .= ' data-direction="' . $direction . '"';
         $html .= ' data-start="' . $start . '"';
-        $html .= ' style="aspect-ratio: ' . $ratio . ';"';
+        $html .= ' style="' . esc_attr( $container_style ) . '"';
         $html .= ' data-lpc-ratio="' . esc_attr( $ratio ) . '"';
+        if ( $width ) {
+            $html .= ' data-lpc-width="' . esc_attr( $width ) . '"';
+        }
         $html .= $editor_attr;
         $html .= $composite_attr;
-        $html .= ' data-before-url="' . $before_url . '"';
-        $html .= ' data-after-url="' . $after_url . '"';
+        $html .= ' data-before-url="' . esc_url( $before_url ) . '"';
+        $html .= ' data-after-url="' . esc_url( $after_url ) . '"';
         $html .= '>';
 
-        // After layer (bottom).
-        $html .= '<img class="lpc-img lpc-img--after" src="' . $after_url . '" alt="' . $after_alt . '"';
-        $html .= ' loading="lazy" decoding="async"';
-        if ( $after_style ) {
-            $html .= ' style="' . esc_attr( $after_style ) . '"';
-        }
-        $html .= '>';
+        // After layer (bottom) — responsive image with srcset when attachment ID is resolvable.
+        $html .= $this->render_img( $after_url, $after_alt, 'lpc-img lpc-img--after', $after_style, $sizes, $after_attachment_id );
 
         // Before layer (top, clipped).
         $html .= '<div class="lpc-before" style="' . $this->clip_style( $direction, $start ) . '">';
-        $html .= '<img class="lpc-img lpc-img--before" src="' . $before_url . '" alt="' . $before_alt . '"';
-        $html .= ' loading="lazy" decoding="async"';
-        if ( $before_style ) {
-            $html .= ' style="' . esc_attr( $before_style ) . '"';
-        }
-        $html .= '>';
+        $html .= $this->render_img( $before_url, $before_alt, 'lpc-img lpc-img--before', $before_style, $sizes, $before_attachment_id );
         $html .= '</div>';
 
         // Divider handle.
@@ -371,14 +396,120 @@ final class Lapeau_AB_Compare {
             $all[ $slider_id ][ $side ]['url'] = $image_url;
         }
 
+        // Optional attachment ID — stored per side to speed up srcset resolution on render.
+        $image_id = absint( $_POST['image_id'] ?? 0 );
+        if ( $image_id ) {
+            $all[ $slider_id ][ $side ]['attachment_id'] = $image_id;
+        }
+
         // Optional aspect ratio — stored at slider level (not per-side).
         $ratio = sanitize_text_field( $_POST['ratio'] ?? '' );
         if ( $ratio && preg_match( '#^\d+/\d+$#', $ratio ) ) {
             $all[ $slider_id ]['ratio'] = $ratio;
         }
 
+        // Optional container width — stored at slider level. Empty string clears the saved override.
+        if ( isset( $_POST['width'] ) ) {
+            $width_val = sanitize_text_field( $_POST['width'] );
+            if ( '' === $width_val ) {
+                unset( $all[ $slider_id ]['width'] );
+            } elseif ( preg_match( '#^\d+(\.\d+)?(px|%)$#', $width_val ) ) {
+                $all[ $slider_id ]['width'] = $width_val;
+            }
+        }
+
         update_post_meta( $post_id, self::META_KEY, $all );
         wp_send_json_success( [ 'saved' => $all[ $slider_id ][ $side ] ] );
+    }
+    /**
+     * Render a responsive <img> element for a slider layer.
+     *
+     * Resolves the attachment ID from the URL (or uses the pre-supplied ID)
+     * so WordPress srcset and sizes attributes can be generated natively.
+     * Falls back to a plain src-only img when no attachment ID can be resolved.
+     *
+     * Uses a per-request static cache for the URL → ID lookup to avoid
+     * redundant database queries (e.g. composite mode, repeated shortcodes).
+     *
+     * @param string $url             Source URL for the image.
+     * @param string $alt             Alt text (unescaped).
+     * @param string $css_class       Space-separated CSS class names.
+     * @param string $transform_style Inline CSS for transform overrides (unescaped).
+     * @param string $sizes           CSS sizes attribute value.
+     * @param int    $attachment_id   Pre-resolved attachment ID; 0 triggers URL lookup.
+     * @return string                 Complete <img> HTML.
+     */
+    private function render_img( string $url, string $alt, string $css_class, string $transform_style, string $sizes, int $attachment_id = 0 ): string {
+        static $id_cache = [];
+
+        if ( ! $attachment_id ) {
+            if ( ! array_key_exists( $url, $id_cache ) ) {
+                // attachment_url_to_postid() requires a fully-qualified URL.
+                // Content often uses root-relative paths (/wp-content/...) — resolve them.
+                $lookup_url = preg_match( '#^https?://#', $url ) ? $url : home_url( $url );
+                $id_cache[ $url ] = attachment_url_to_postid( $lookup_url );
+            }
+            $attachment_id = $id_cache[ $url ];
+        }
+
+        $srcset = '';
+        $src    = esc_url( $url );
+
+        if ( $attachment_id ) {
+            // Use 'large' (≤1024 px) as the default src — avoids loading full-res on non-srcset browsers.
+            $large = wp_get_attachment_image_src( $attachment_id, 'large' );
+            if ( $large ) {
+                $src = esc_url( $large[0] );
+            }
+            $srcset_str = wp_get_attachment_image_srcset( $attachment_id, 'full' );
+            if ( $srcset_str ) {
+                $srcset = $srcset_str;
+            }
+        }
+
+        $img  = '<img class="' . esc_attr( $css_class ) . '"';
+        $img .= ' src="' . $src . '"';
+        if ( $srcset ) {
+            $img .= ' srcset="' . esc_attr( $srcset ) . '"';
+            $img .= ' sizes="' . esc_attr( $sizes ) . '"';
+        }
+        $img .= ' alt="' . esc_attr( $alt ) . '"';
+        $img .= ' loading="lazy" decoding="async"';
+        if ( $transform_style ) {
+            $img .= ' style="' . esc_attr( $transform_style ) . '"';
+        }
+        $img .= '>';
+
+        return $img;
+    }
+
+    /**
+     * Compute the CSS sizes attribute for a slider image.
+     *
+     * Returns a sizes string matching the slider's rendered dimensions,
+     * factoring in an explicit width override and whether composite mode
+     * applies a 200% image stretch.
+     *
+     * @param string $container_width Saved container width ('' = 100%; e.g. '80%', '400px').
+     * @param bool   $is_composite    True when the image is stretched to 200% container width.
+     * @return string                 CSS sizes attribute value.
+     */
+    private function compute_sizes( string $container_width, bool $is_composite ): string {
+        $multiplier = $is_composite ? 2 : 1;
+
+        if ( empty( $container_width ) ) {
+            return 2 === $multiplier ? '200vw' : '100vw';
+        }
+
+        if ( '%' === substr( $container_width, -1 ) ) {
+            $pct = (float) $container_width;
+            return round( $pct * $multiplier ) . 'vw';
+        }
+
+        // px value.
+        $px           = (int) $container_width;
+        $effective_px = $px * $multiplier;
+        return '(max-width: ' . $effective_px . 'px) 100vw, ' . $effective_px . 'px';
     }
 }
 
