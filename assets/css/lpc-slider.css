@@ -1,0 +1,215 @@
+/**
+ * Lapeau A/B Compare – Front-end slider styles.
+ *
+ * Minimal, vanilla CSS using clip-path for the reveal effect.
+ * All positioning uses object-fit / transform so the editor
+ * and public view share identical rendering.
+ *
+ * @package Lapeau_AB_Compare
+ * @version 1.2.0
+ */
+
+/* ----------------------------------------------------------------
+   Container
+   ---------------------------------------------------------------- */
+
+.lpc-compare {
+    position: relative;
+    overflow: hidden;
+    width: 100%;
+    border-radius: 8px;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: pan-y;
+    cursor: col-resize;
+    background: #1a1a1a;
+}
+
+.lpc-compare--vertical {
+    cursor: row-resize;
+}
+
+/* ----------------------------------------------------------------
+   Images – shared base
+   ---------------------------------------------------------------- */
+
+.lpc-img {
+    display: block;
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transform-origin: center center;
+    pointer-events: none;
+}
+
+/* ----------------------------------------------------------------
+   Before layer (clipped overlay)
+   ---------------------------------------------------------------- */
+
+.lpc-before {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+}
+
+/* ----------------------------------------------------------------
+   Divider line + handle
+   ---------------------------------------------------------------- */
+
+.lpc-divider {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    width: 2px;
+    height: 100%;
+    background: #fff;
+    transform: translateX(-50%);
+    z-index: 3;
+    pointer-events: none;
+}
+
+.lpc-compare--vertical .lpc-divider {
+    top: 50%;
+    left: 0;
+    width: 100%;
+    height: 2px;
+    transform: translateY(-50%);
+}
+
+.lpc-handle {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    pointer-events: auto;
+    cursor: inherit;
+}
+
+/* Chevron arrows inside handle */
+.lpc-arrow {
+    display: block;
+    width: 0;
+    height: 0;
+    border-style: solid;
+}
+
+.lpc-arrow--left {
+    border-width: 5px 6px 5px 0;
+    border-color: transparent #555 transparent transparent;
+}
+
+.lpc-arrow--right {
+    border-width: 5px 0 5px 6px;
+    border-color: transparent transparent transparent #555;
+}
+
+/* Vertical direction rotates arrows */
+.lpc-compare--vertical .lpc-arrow--left {
+    border-width: 0 5px 6px 5px;
+    border-color: transparent transparent #555 transparent;
+}
+
+.lpc-compare--vertical .lpc-arrow--right {
+    border-width: 6px 5px 0 5px;
+    border-color: #555 transparent transparent transparent;
+}
+
+/* ----------------------------------------------------------------
+   Badges (before / after labels)
+   ---------------------------------------------------------------- */
+
+.lpc-badge {
+    position: absolute;
+    bottom: 12px;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 2;
+    pointer-events: none;
+    line-height: 1.2;
+}
+
+.lpc-badge--before {
+    left: 12px;
+}
+
+.lpc-badge--after {
+    right: 12px;
+}
+
+.lpc-compare--vertical .lpc-badge--before {
+    top: 12px;
+    bottom: auto;
+    left: 12px;
+}
+
+.lpc-compare--vertical .lpc-badge--after {
+    bottom: 12px;
+    right: auto;
+    left: 12px;
+}
+
+/* ----------------------------------------------------------------
+   Dragging state
+   ---------------------------------------------------------------- */
+
+.lpc-compare--dragging {
+    cursor: col-resize !important;
+}
+
+.lpc-compare--dragging.lpc-compare--vertical {
+    cursor: row-resize !important;
+}
+
+/* ----------------------------------------------------------------
+   Composite mode
+   A single side-by-side image (left = before, right = after).
+   The image is stretched to 200% width and anchored left for the
+   before layer, right for the after layer — so each layer shows
+   only its half of the composite.
+   ---------------------------------------------------------------- */
+
+.lpc-compare--composite .lpc-img {
+    object-fit: fill;
+    width: 200%;
+    max-width: none;
+}
+
+.lpc-compare--composite .lpc-img--before {
+    left: 0;
+    right: auto;
+}
+
+.lpc-compare--composite .lpc-img--after {
+    right: 0;
+    left: auto;
+}
+
+/* ----------------------------------------------------------------
+   Reduced motion
+   ---------------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+    .lpc-compare,
+    .lpc-img,
+    .lpc-divider,
+    .lpc-handle {
+        transition: none !important;
+    }
+}

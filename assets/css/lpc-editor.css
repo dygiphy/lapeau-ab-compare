@@ -1,0 +1,399 @@
+/**
+ * Lapeau A/B Compare – Inline editor styles.
+ *
+ * Loaded only for logged-in users with edit_posts capability.
+ * The editor panel sits beside the slider on the front end,
+ * manipulating the same CSS properties the public view uses.
+ *
+ * @package Lapeau_AB_Compare
+ * @version 1.2.0
+ */
+
+/* ----------------------------------------------------------------
+   Editable state indicator
+   ---------------------------------------------------------------- */
+
+.lpc-compare[data-lpc-editable] {
+    outline: 2px dashed rgba(100, 100, 255, 0.4);
+    outline-offset: 2px;
+}
+
+.lpc-compare[data-lpc-editable]:hover {
+    outline-color: rgba(100, 100, 255, 0.7);
+}
+
+/* ----------------------------------------------------------------
+   Edit toggle button (top-right corner of slider)
+   ---------------------------------------------------------------- */
+
+.lpc-edit-toggle {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 10;
+    width: 30px;
+    height: 30px;
+    border: none;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.6);
+    color: #fff;
+    font-size: 14px;
+    line-height: 30px;
+    text-align: center;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.lpc-compare[data-lpc-editable]:hover .lpc-edit-toggle,
+.lpc-compare--editing .lpc-edit-toggle {
+    opacity: 1;
+}
+
+.lpc-compare--editing .lpc-edit-toggle {
+    background: rgba(80, 80, 255, 0.8);
+}
+
+/* ----------------------------------------------------------------
+   Editor panel – sits below the slider when active
+   ---------------------------------------------------------------- */
+
+.lpc-editor-panel {
+    position: absolute;
+    display: none;
+    background: #1e1e2e;
+    color: #ddd;
+    border-radius: 0 0 8px 8px;
+    padding: 14px 16px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 12px;
+    line-height: 1.4;
+    z-index: 99999;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    box-sizing: border-box;
+}
+
+.lpc-editor-panel--open {
+    display: block;
+}
+
+/* ----------------------------------------------------------------
+   Panel layout
+   ---------------------------------------------------------------- */
+
+.lpc-editor-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+    gap: 8px;
+}
+
+.lpc-editor-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #fff;
+}
+
+/* A/B toggle tabs */
+.lpc-side-tabs {
+    display: flex;
+    gap: 2px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 4px;
+    padding: 2px;
+}
+
+.lpc-side-tab {
+    padding: 4px 12px;
+    border: none;
+    border-radius: 3px;
+    background: transparent;
+    color: #999;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+
+.lpc-side-tab:hover {
+    color: #ddd;
+}
+
+.lpc-side-tab--active {
+    background: rgba(100, 100, 255, 0.4);
+    color: #fff;
+}
+
+/* ----------------------------------------------------------------
+   Control rows
+   ---------------------------------------------------------------- */
+
+.lpc-control-group {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px 16px;
+    margin-bottom: 12px;
+}
+
+.lpc-control {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.lpc-control--full {
+    grid-column: 1 / -1;
+}
+
+.lpc-control label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #888;
+}
+
+.lpc-control input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 4px;
+    border-radius: 2px;
+    background: rgba(255, 255, 255, 0.15);
+    outline: none;
+}
+
+.lpc-control input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #7c7cf7;
+    cursor: pointer;
+}
+
+.lpc-control input[type="range"]::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border: none;
+    border-radius: 50%;
+    background: #7c7cf7;
+    cursor: pointer;
+}
+
+.lpc-control-value {
+    font-size: 10px;
+    color: #aaa;
+    text-align: right;
+    min-width: 36px;
+}
+
+.lpc-control-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* ----------------------------------------------------------------
+   Action buttons row
+   ---------------------------------------------------------------- */
+
+.lpc-editor-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: space-between;
+    align-items: center;
+    padding-top: 10px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.lpc-btn {
+    padding: 5px 12px;
+    border: none;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.lpc-btn--primary {
+    background: #7c7cf7;
+    color: #fff;
+}
+
+.lpc-btn--primary:hover {
+    background: #6a6ae0;
+}
+
+.lpc-btn--secondary {
+    background: rgba(255, 255, 255, 0.1);
+    color: #ccc;
+}
+
+.lpc-btn--secondary:hover {
+    background: rgba(255, 255, 255, 0.18);
+}
+
+.lpc-btn--danger {
+    background: transparent;
+    color: #e57373;
+    font-size: 10px;
+}
+
+.lpc-btn--danger:hover {
+    background: rgba(229, 115, 115, 0.1);
+}
+
+/* Media select button */
+.lpc-media-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    border: 1px dashed rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+    background: transparent;
+    color: #aaa;
+    font-size: 11px;
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+}
+
+.lpc-media-btn:hover {
+    border-color: rgba(100, 100, 255, 0.5);
+    color: #ddd;
+}
+
+/* ----------------------------------------------------------------
+   Direction toggle in panel
+   ---------------------------------------------------------------- */
+
+.lpc-direction-toggle {
+    display: flex;
+    gap: 2px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 4px;
+    padding: 2px;
+}
+
+.lpc-direction-btn {
+    padding: 4px 10px;
+    border: none;
+    border-radius: 3px;
+    background: transparent;
+    color: #999;
+    font-size: 11px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+
+.lpc-direction-btn:hover {
+    color: #ddd;
+}
+
+.lpc-direction-btn--active {
+    background: rgba(100, 100, 255, 0.4);
+    color: #fff;
+}
+
+/* ----------------------------------------------------------------
+   Saving indicator
+   ---------------------------------------------------------------- */
+
+.lpc-saving-indicator {
+    font-size: 10px;
+    color: #7c7cf7;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.lpc-saving-indicator--visible {
+    opacity: 1;
+}
+
+/* ----------------------------------------------------------------
+   Panning mode
+   ---------------------------------------------------------------- */
+
+.lpc-compare--panning {
+    cursor: grab !important;
+}
+
+.lpc-compare--panning-active {
+    cursor: grabbing !important;
+}
+
+/* ----------------------------------------------------------------
+   Responsive
+   ---------------------------------------------------------------- */
+
+@media ( max-width: 600px ) {
+    .lpc-editor-panel {
+        padding: 10px 12px;
+    }
+
+    .lpc-control-group {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* ----------------------------------------------------------------
+   Aspect ratio control
+   ---------------------------------------------------------------- */
+
+.lpc-ratio-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+    margin-top: 4px;
+}
+
+.lpc-ratio-presets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.lpc-ratio-btn {
+    padding: 3px 8px;
+    border: 1px solid #555;
+    border-radius: 3px;
+    background: #2a2a2a;
+    color: #ccc;
+    font-size: 10px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+    white-space: nowrap;
+}
+
+.lpc-ratio-btn:hover {
+    background: #3a3a3a;
+    border-color: #888;
+    color: #fff;
+}
+
+.lpc-ratio-btn--active {
+    background: #5555cc;
+    border-color: #7c7cf7;
+    color: #fff;
+}
+
+.lpc-ratio-custom {
+    width: 70px;
+    padding: 3px 6px;
+    border: 1px solid #555;
+    border-radius: 3px;
+    background: #1e1e1e;
+    color: #ccc;
+    font-size: 11px;
+}
+
+.lpc-ratio-custom:focus {
+    outline: none;
+    border-color: #7c7cf7;
+    color: #fff;
+}
