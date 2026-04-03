@@ -9,6 +9,37 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## 2026-04-03 — v1.7.1 — Fix pan at 90°/270° rotation
+
+### Fixed
+- **Panning blocked at 90°/270° rotation** (`lpc-editor.js`, `lapeau-ab-compare.php`): from v1.1.0, panning was completely disabled when an image was rotated 90° or 270°, with the rationale that “axes are swapped”. This made images like portrait body-shot photos impossible to reposition within the slider. Root cause analysis: `object-position` is applied in element space before any CSS transform and is coverage-safe at all angles — it cannot expose the container background regardless of rotation. The `translate()` component (used to add extra pan range at scale > 1) is the only part where axis swap matters, since it moves the element box itself.
+  - `enforceCoverage`: removed the zero-at-90°/270° block. All offsets are now simply clamped to \u00b150 at all angles.
+  - `applyTransform` (JS): removed the guard that cleared `object-position` at 90°/270°. `object-position` is now always applied when non-default. The `translate()` component is **skipped** at 90°/270° (relies on `object-position` only for pan at those angles, which is coverage-safe).
+  - `build_img_style` (PHP): same skip — `translate()` is not emitted when `$is_rot90` is true, so the public view matches the editor WYSIWYG.
+  - `syncControlsToState`: Pan X/Y range sliders are no longer disabled at 90°/270°.
+  - `pointerdown` drag handler: removed the drag block at 90°/270°.
+  - `pointermove` drag handler: **axis-swapped drag** at 90°/270° so grab-and-drag feels natural in the visual (post-rotation) coordinate frame:
+    - 90° CW: `dx` (visual right) → `offsetY +=` | `dy` (visual down) → `offsetX +=`
+    - 270° CW: `dx` (visual right) → `offsetY -=` | `dy` (visual down) → `offsetX -=`
+- Version bumped from 1.7.0 to 1.7.1.
+
+### Fixed
+- **CSS specificity bug — images not filling slider container on treatment pages** (`lpc-slider.css`): the `.lpc-img` selector had specificity `(0,1,0)` (one class). Theme stylesheets commonly include rules like `.lp-result-card img { height: auto }` with specificity `(0,1,1)` (class + element), which is higher. This overrode `.lpc-img { height: 100% }`, causing slider images to render at their intrinsic proportional height instead of filling the 100% height of the container. With `height: auto`, `object-fit: cover` is effectively disabled (requires both width and height to be constrained), so `object-position` panning had no visual effect at all. The fix is to prepend the container: `.lpc-compare .lpc-img` now gives specificity `(0,2,0)` which beats any `.parent-class img` pattern. This was the root cause of the reported "drag-to-pan doesn't work on treatment pages" issue — the homepage worked because `.lp-concern-slider` has no conflicting `img { height }` rule.
+
+### Changed
+- **Reset button now resets both sides** (`lpc-editor.js`): previously Reset only cleared the active side's transforms, leaving the other side untouched. Reset now zeroes both `state.before` and `state.after` in a single click. Image URLs (stored in `slider.dataset`) are unaffected.
+- Version bumped from 1.6.0 to 1.7.0.
+
+## 2026-04-02 — v1.6.0 — Privacy blur mask
+
+### Added
+- **Privacy blur mask** (`lapeau-ab-compare.php`, `lpc-slider.css`, `lpc-editor.css`, `lpc-editor.js`): `backdrop-filter: blur()` rectangle overlay for obscuring patient-identifiable areas in B/A images. Positioned via percentage-based inline styles, sits above both image layers (z-index 2) and behind the divider (z-index 3). Scales responsively with the container.
+- **Editor blur controls** (`lpc-editor.js`, `lpc-editor.css`): toggle switch, intensity slider (5–50px), feather (border-radius 0–50px), width, height, rotation (±45°), and two presets: "Eye strip" (forehead-to-nose band) and "Full face" (upper head oval).
+- **Ctrl+drag positioning** (`lpc-editor.js`): holding Ctrl (or Cmd on macOS) while dragging repositions the blur mask within the container. Orange dashed outline and crosshair cursor provide visual feedback.
+- **PHP render** (`lapeau-ab-compare.php`): new `render_blur_mask()` method outputs the blur div with inline styles from saved post meta. Only rendered when `blur.enabled` is truthy.
+- **AJAX persistence**: blur fields (`blur_enabled`, `blur_x`, `blur_y`, `blur_w`, `blur_h`, `blur_rotate`, `blur_intensity`, `blur_feather`) saved via existing `lpc_save_transform` endpoint at the slider level.
+- Version bumped from 1.4.1 to 1.6.0.
+
 ## 2026-03-25 — v1.4.1 — srcset URL fix + badge fade on divider
 
 ### Fixed

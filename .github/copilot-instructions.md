@@ -12,7 +12,7 @@ Standalone WordPress plugin providing the `[lpc_compare]` shortcode for before/a
 | **Shortcode** | `[lpc_compare]` |
 | **Post meta key** | `_lpc_transforms` |
 | **AJAX action** | `lpc_save_transform` (nonce action: `lpc_save`) |
-| **Current version** | 1.4.0 |
+| **Current version** | 1.7.1 |
 | **Minimum PHP** | 7.4 |
 | **Tested WP** | 6.9+ |
 
@@ -67,12 +67,15 @@ _lpc_transforms = [
         'after'  => [ ... same ... ],
         'ratio'  => '4/3',
         'width'  => '80%',
+        'blur'   => [ 'enabled' => true, 'x' => 15, 'y' => 25, 'w' => 70, 'h' => 12, 'rotate' => 0, 'intensity' => 20, 'feather' => 8 ],
     ],
     ...
 ]
 ```
 
 Saved ratio and width override shortcode attributes. A `url` key overrides the shortcode image URL for that side; `attachment_id` caches the WP media ID to avoid `attachment_url_to_postid()` DB queries on subsequent renders.
+
+The `blur` key stores privacy blur mask settings at the slider level (not per-side). When `enabled` is true, PHP renders a `<div class="lpc-blur-mask">` between the before layer and divider with `backdrop-filter: blur()`. Dimensions are percentages; intensity/feather are pixel values.
 
 ---
 

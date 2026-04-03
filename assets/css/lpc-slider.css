@@ -6,7 +6,7 @@
  * and public view share identical rendering.
  *
  * @package Lapeau_AB_Compare
- * @version 1.4.1
+ * @version 1.7.0
  */
 
 /* ----------------------------------------------------------------
@@ -33,7 +33,13 @@
    Images – shared base
    ---------------------------------------------------------------- */
 
-.lpc-img {
+/*
+ * Specificity must beat common theme patterns like `.card img { height: auto }`
+ * which have specificity (0,1,1). Using `.lpc-compare .lpc-img` gives (0,2,0)
+ * which is higher and ensures height/object-fit are always correct regardless
+ * of the slider's parent container class.
+ */
+.lpc-compare .lpc-img {
     display: block;
     position: absolute;
     inset: 0;
@@ -200,6 +206,24 @@
 .lpc-compare--composite .lpc-img--after {
     right: 0;
     left: auto;
+}
+
+/* ----------------------------------------------------------------
+   Privacy blur mask
+   Sits above both images, behind the slider divider.
+   Uses backdrop-filter so the underlying image content is blurred
+   rather than simply obscured — retains colour context while
+   disguising identifying features.
+   ---------------------------------------------------------------- */
+
+.lpc-blur-mask {
+    position: absolute;
+    z-index: 2;
+    backdrop-filter: blur(var(--lpc-blur, 20px));
+    -webkit-backdrop-filter: blur(var(--lpc-blur, 20px));
+    background: rgba(180, 180, 180, 0.05);
+    pointer-events: none;
+    transform-origin: center center;
 }
 
 /* ----------------------------------------------------------------

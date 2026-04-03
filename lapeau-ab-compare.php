@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Lapeau A/B Compare
  * Description: Lightweight before/after image comparison slider with inline WYSIWYG positioning editor for logged-in users.
- * Version:     1.4.1
+ * Version:     1.7.1
  * Author:      Dygiphy
  * Text Domain: lapeau-ab-compare
  *
@@ -25,7 +25,7 @@ defined( 'ABSPATH' ) || exit;
 final class Lapeau_AB_Compare {
 
     /** @var string Plugin version. */
-    const VERSION = '1.4.1';
+    const VERSION = '1.7.1';
 
     /** @var string Shortcode tag. */
     const SHORTCODE = 'lpc_compare';
@@ -189,6 +189,9 @@ final class Lapeau_AB_Compare {
         // Resolve saved transforms from post meta.
         $transforms = $this->get_transforms( $id );
 
+        // Privacy blur mask data (stored at slider level).
+        $blur = $transforms['blur'] ?? [];
+
         // Apply saved URL overrides from meta — these take precedence over shortcode attributes.
         if ( ! empty( $transforms['before']['url'] ) ) {
             $atts['before'] = $transforms['before']['url'];
@@ -215,7 +218,7 @@ final class Lapeau_AB_Compare {
         $after_attachment_id  = ! empty( $transforms['after']['attachment_id']  ) ? (int) $transforms['after']['attachment_id']  : 0;
 
         $before_style = $this->build_img_style( $transforms['before'] ?? [] );
-        $after_style  = $this->build_img_style( $transforms['after'] ?? [] );
+        $after_style  = $this->build_img_style( $transforms['after']  ?? [] );
 
         $before_url = $atts['before'];
         $after_url  = $atts['after'];
@@ -256,6 +259,9 @@ final class Lapeau_AB_Compare {
         $html .= $composite_attr;
         $html .= ' data-before-url="' . esc_url( $before_url ) . '"';
         $html .= ' data-after-url="' . esc_url( $after_url ) . '"';
+        if ( $is_editor && ! empty( $blur ) ) {
+            $html .= ' data-lpc-blur="' . esc_attr( wp_json_encode( $blur ) ) . '"';
+        }
         $html .= '>';
 
         // After layer (bottom) — responsive image with srcset when attachment ID is resolvable.
@@ -265,6 +271,11 @@ final class Lapeau_AB_Compare {
         $html .= '<div class="lpc-before" style="' . $this->clip_style( $direction, $start ) . '">';
         $html .= $this->render_img( $before_url, $before_alt, 'lpc-img lpc-img--before', $before_style, $sizes, $before_attachment_id );
         $html .= '</div>';
+
+        // Privacy blur mask (above images, behind divider).
+        if ( ! empty( $blur['enabled'] ) ) {
+            $html .= $this->render_blur_mask( $blur );
+        }
 
         // Divider handle.
         $html .= '<div class="lpc-divider">';
@@ -297,6 +308,13 @@ final class Lapeau_AB_Compare {
     /**
      * Build inline style string from a transform array.
      *
+     * Uses a two-component pan model matching the JS editor:
+     *  1. object-position: (50-X)% (50-Y)% — shifts the visible crop within the
+     *     element (zero coverage risk; image always fills the element).
+     *  2. transform: translate(X*(scale-1)%, Y*(scale-1)%) scale(s) [rotate] —
+     *     translate uses ONLY scale-induced overhang, so at scale=1 translate=0
+     *     and no background is ever exposed.
+     *
      * @param array $t Transform data: scale, offsetX, offsetY, rotate.
      * @return string  CSS declarations string (without surrounding quotes).
      */
@@ -304,27 +322,43 @@ final class Lapeau_AB_Compare {
         if ( empty( $t ) ) {
             return '';
         }
-        $parts = [];
-        $scale   = isset( $t['scale'] ) ? (float) $t['scale'] : 1;
+        $scale   = isset( $t['scale'] )   ? (float) $t['scale']   : 1;
         $offsetX = isset( $t['offsetX'] ) ? (float) $t['offsetX'] : 0;
         $offsetY = isset( $t['offsetY'] ) ? (float) $t['offsetY'] : 0;
-        $rotate  = isset( $t['rotate'] ) ? (float) $t['rotate'] : 0;
+        $rotate  = isset( $t['rotate'] )  ? (float) $t['rotate']  : 0;
 
-        // Only emit styles when changed from defaults.
-        if ( 1.0 !== $scale || 0.0 !== $offsetX || 0.0 !== $offsetY || 0.0 !== $rotate ) {
-            $transforms = [];
-            if ( 0.0 !== $offsetX || 0.0 !== $offsetY ) {
-                $transforms[] = 'translate(' . $offsetX . '%, ' . $offsetY . '%)';
+        if ( 1.0 === $scale && 0.0 === $offsetX && 0.0 === $offsetY && 0.0 === $rotate ) {
+            return '';
+        }
+
+        $parts = [];
+
+        // 1. object-position: (50-X)% (50-Y)% — intrinsic overflow, no coverage risk.
+        if ( 0.0 !== $offsetX || 0.0 !== $offsetY ) {
+            $parts[] = 'object-position: ' . ( 50.0 - $offsetX ) . '% ' . ( 50.0 - $offsetY ) . '%';
+        }
+
+        // 2. transform: translate adds extra pan range at scale > 1.
+        //    At 90°/270° the translate axis is visually perpendicular to its intended
+        //    direction, so it is skipped — object-position handles all pan at those angles.
+        $transforms  = [];
+        $norm_rotate = fmod( fmod( $rotate, 360.0 ) + 360.0, 360.0 );
+        $is_rot90    = ( abs( $norm_rotate - 90.0 ) < 0.5 || abs( $norm_rotate - 270.0 ) < 0.5 );
+        if ( ! $is_rot90 ) {
+            $tx_pct = round( $offsetX * ( $scale - 1.0 ), 3 );
+            $ty_pct = round( $offsetY * ( $scale - 1.0 ), 3 );
+            if ( abs( $tx_pct ) > 0.001 || abs( $ty_pct ) > 0.001 ) {
+                $transforms[] = 'translate(' . $tx_pct . '%, ' . $ty_pct . '%)';
             }
-            if ( 1.0 !== $scale ) {
-                $transforms[] = 'scale(' . $scale . ')';
-            }
-            if ( 0.0 !== $rotate ) {
-                $transforms[] = 'rotate(' . $rotate . 'deg)';
-            }
-            if ( ! empty( $transforms ) ) {
-                $parts[] = 'transform: ' . implode( ' ', $transforms );
-            }
+        }
+        if ( 1.0 !== $scale ) {
+            $transforms[] = 'scale(' . $scale . ')';
+        }
+        if ( 0.0 !== $rotate ) {
+            $transforms[] = 'rotate(' . $rotate . 'deg)';
+        }
+        if ( ! empty( $transforms ) ) {
+            $parts[] = 'transform: ' . implode( ' ', $transforms );
         }
 
         return implode( '; ', $parts );
@@ -418,9 +452,55 @@ final class Lapeau_AB_Compare {
             }
         }
 
+        // Optional privacy blur mask — stored at slider level (not per-side).
+        if ( isset( $_POST['blur_enabled'] ) ) {
+            $all[ $slider_id ]['blur'] = [
+                'enabled'   => ! empty( $_POST['blur_enabled'] ) && '0' !== $_POST['blur_enabled'],
+                'x'         => round( (float) ( $_POST['blur_x'] ?? 15 ), 2 ),
+                'y'         => round( (float) ( $_POST['blur_y'] ?? 25 ), 2 ),
+                'w'         => round( (float) ( $_POST['blur_w'] ?? 70 ), 2 ),
+                'h'         => round( (float) ( $_POST['blur_h'] ?? 12 ), 2 ),
+                'rotate'    => round( (float) ( $_POST['blur_rotate'] ?? 0 ), 2 ),
+                'intensity' => round( (float) ( $_POST['blur_intensity'] ?? 20 ), 1 ),
+                'feather'   => round( (float) ( $_POST['blur_feather'] ?? 8 ), 1 ),
+            ];
+        }
+
         update_post_meta( $post_id, self::META_KEY, $all );
         wp_send_json_success( [ 'saved' => $all[ $slider_id ][ $side ] ] );
     }
+
+    /**
+     * Render the privacy blur mask overlay element.
+     *
+     * All dimensions are percentages of the container so the mask scales
+     * responsively. The backdrop-filter blur intensity and border-radius
+     * (feather) are set via inline styles.
+     *
+     * @param array $blur Blur settings: enabled, x, y, w, h, rotate, intensity, feather.
+     * @return string      HTML for the blur mask div.
+     */
+    private function render_blur_mask( array $blur ): string {
+        $x         = isset( $blur['x'] )         ? (float) $blur['x']         : 15;
+        $y         = isset( $blur['y'] )         ? (float) $blur['y']         : 25;
+        $w         = isset( $blur['w'] )         ? (float) $blur['w']         : 70;
+        $h         = isset( $blur['h'] )         ? (float) $blur['h']         : 12;
+        $rotate    = isset( $blur['rotate'] )    ? (float) $blur['rotate']    : 0;
+        $intensity = isset( $blur['intensity'] ) ? (float) $blur['intensity'] : 20;
+        $feather   = isset( $blur['feather'] )   ? (float) $blur['feather']   : 8;
+
+        $style = sprintf(
+            'left:%s%%;top:%s%%;width:%s%%;height:%s%%;--lpc-blur:%spx;border-radius:%spx',
+            round( $x, 2 ), round( $y, 2 ), round( $w, 2 ), round( $h, 2 ),
+            round( $intensity, 1 ), round( $feather, 1 )
+        );
+        if ( abs( $rotate ) > 0.01 ) {
+            $style .= sprintf( ';transform:rotate(%sdeg)', round( $rotate, 2 ) );
+        }
+
+        return '<div class="lpc-blur-mask" style="' . esc_attr( $style ) . '"></div>';
+    }
+
     /**
      * Render a responsive <img> element for a slider layer.
      *
