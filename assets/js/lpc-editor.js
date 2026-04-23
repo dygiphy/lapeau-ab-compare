@@ -1,137 +1,158 @@
-﻿/**
- * Lapeau A/B Compare â€“ Inline WYSIWYG editor.
+/**
+ * Lapeau A/B Compare – Inline WYSIWYG editor.
  *
  * Loaded only for logged-in editors. Adds a control panel below each
  * editable slider that manipulates the SAME CSS properties the
- * public view uses â€" ensuring true WYSIWYG.
+ * public view uses – ensuring true WYSIWYG.
  *
- * Pan model (v1.5.0+):
- *   - Pan uses CSS object-position (not transform:translate) so the focal
- *     point shifts within the container without ever exposing background.
- *     Works at scale = 1, including portrait images in landscape containers.
- *   - offsetX / offsetY are percentage points from the centred default
- *     (50% 50%); range -50 to +50.
- *   - Emitted as object-position: (50+offsetX)% (50+offsetY)%.
- * Zoom / Rotate:
- *   - Additional zoom via transform:scale(s); rotate snaps to 90° multiples.
- *   - At 90°/270° the minimum scale is raised to max(cW/cH, cH/cW) and pan
- *     is zeroed (axes are swapped by the rotation).
+ * Transform model (v2.0.0):
+ *   - Single CSS transform: translate(tx px, ty px) rotate(θ deg) scale(s)
+ *   - CSS reads right-to-left: scale → rotate → translate in screen space.
+ *   - No object-position used – all positioning via transform only.
+ *   - Constraint engine ensures 100% container coverage at any rotation/scale:
+ *     min scale = max(|cosθ| + (ch/cw)|sinθ|, |cosθ| + (cw/ch)|sinθ|)
+ *     Pan clamped in rotated frame then converted back to screen space.
+ *
+ * Interaction:
+ *   - Drag: pan active image (screen-space, side-sensitive).
+ *   - Wheel: rotate active image (side-sensitive).
+ *   - Ctrl+Drag: position blur mask.
+ *   - Shift+Drag: move slider divider.
  *
  * @package Lapeau_AB_Compare
- * @version 1.7.1
+ * @version 2.0.0
  */
 ( function () {
     'use strict';
 
     /* global lpcEditor */
 
-    /**
-     * Set to true to enable diagnostic console logging for the editor.
-     * Logs container/image dimensions, scale, pan limits, and drag bail reasons.
-     *
-     * @type {boolean}
-     */
-    var LPC_DEBUG = true;
+    /** @type {boolean} */
+    var LPC_DEBUG = false;
 
-    /**
-     * Log a diagnostic message when LPC_DEBUG is enabled.
-     *
-     * @param {...*} args - Arguments forwarded to console.log.
-     */
     function lpcLog() {
         if ( LPC_DEBUG ) {
-            // eslint-disable-next-line no-console
             console.log.apply( console, [ '[lpc-editor]' ].concat( Array.prototype.slice.call( arguments ) ) );
         }
     }
 
-    /** Preset aspect ratios shown as toggles. */
     var RATIO_PRESETS = [ '1/1', '4/3', '3/4', '16/9', '9/16' ];
-
-    /** Preset container widths shown as toggles (percentage values). */
     var WIDTH_PRESETS = [ '100%', '80%', '60%', '50%', '40%' ];
 
-    /**
-     * Clamp a number between min and max.
-     *
-     * @param {number} val
-     * @param {number} min
-     * @param {number} max
-     * @returns {number}
-     */
     function clamp( val, min, max ) {
         return Math.min( Math.max( val, min ), max );
     }
 
+    /* ═══════════════════════════════════════════════════════════════════
+     *  Constraint engine – ensures 100% coverage of the container.
+     *
+     *  The image element has position:absolute; inset:0; width:100%;
+     *  height:100%; object-fit:cover – so at scale=1 rotation=0 it
+     *  exactly fills the container (cw × ch). Pan is applied via
+     *  object-position (moves image content within the static element),
+     *  not CSS translate (which moves the element and exposes background).
+     *  Pan limits come from the object-fit:cover overflow computed from
+     *  img.naturalWidth / naturalHeight – independent of rotation/scale.
+     * ═══════════════════════════════════════════════════════════════════ */
+
     /**
-     * Return the minimum scale required to keep the container fully covered
-     * when the image is rotated by the given angle.
+     * Compute the maximum pan offset (element-space px) available from the
+     * object-fit:cover overflow for an image in a container, accounting for
+     * the current zoom scale.
      *
-     * At 0Â°/180Â° the cover scale is 1 (object-fit:cover handles it).
-     * At 90Â°/270Â° the rotated element's visual dimensions are swapped, so
-     * we need scale = max(cW/cH, cH/cW).
+     * When transform:scale(s) is applied to the image element, the visible
+     * window in element-local space shrinks to cw/s × ch/s (centred). The
+     * image (k×natural, from object-fit:cover) must still cover that window,
+     * so the available pan range grows with scale:
      *
-     * @param {number}      deg       - Rotation in degrees (normalised to 0â€“360).
-     * @param {HTMLElement} container - The .lpc-compare element.
+     *   maxPanX = max(0, (k·iw − cw/s) / 2)
+     *   maxPanY = max(0, (k·ih − ch/s) / 2)
+     *
+     * At s=1 this equals the plain object-fit:cover overflow.
+     *
+     * @param {number} iw    – Image natural width.
+     * @param {number} ih    – Image natural height.
+     * @param {number} cw    – Container width (px).
+     * @param {number} ch    – Container height (px).
+     * @param {number} scale – Current CSS transform scale (default 1).
+     * @returns {{ maxPanX: number, maxPanY: number }}
+     */
+    function coverPanRange( iw, ih, cw, ch, scale ) {
+        if ( ! iw || ! ih ) { return { maxPanX: 0, maxPanY: 0 }; }
+        var s = scale || 1;
+        var k = Math.max( cw / iw, ch / ih );
+        return {
+            maxPanX: Math.max( 0, ( iw * k - cw / s ) / 2 ),
+            maxPanY: Math.max( 0, ( ih * k - ch / s ) / 2 )
+        };
+    }
+
+    /**
+     * Minimum scale for a rotated rectangle of the same base size as the
+     * container to fully cover the container.
+     *
+     * @param {number} cw       – Container width (px).
+     * @param {number} ch       – Container height (px).
+     * @param {number} angleDeg – Rotation in degrees.
      * @returns {number}
      */
-    function minScaleForRotation( deg, container ) {
-        var norm = ( ( deg % 360 ) + 360 ) % 360;
-        if ( norm === 90 || norm === 270 ) {
-            var rect = container.getBoundingClientRect();
-            if ( rect.height > 0 ) {
-                var r = rect.width / rect.height;
-                return Math.max( r, 1 / r );
-            }
+    function minScaleForRotation( cw, ch, angleDeg ) {
+        var rad  = angleDeg * Math.PI / 180;
+        var cosA = Math.abs( Math.cos( rad ) );
+        var sinA = Math.abs( Math.sin( rad ) );
+        return Math.max(
+            cosA + ( ch / cw ) * sinA,
+            cosA + ( cw / ch ) * sinA
+        );
+    }
+
+    /**
+     * Build the CSS transform string for scale + rotation only (no translate).
+     * Pan is handled separately via object-position.
+     *
+     * @param {{ scale: number, rotate: number }} s
+     * @returns {string}
+     */
+    function buildTransformCSS( s ) {
+        var parts = [];
+        if ( Math.abs( s.rotate ) > 0.01 ) {
+            parts.push( 'rotate(' + s.rotate.toFixed( 2 ) + 'deg)' );
         }
-        return 1;
+        if ( Math.abs( s.scale - 1 ) > 0.0001 ) {
+            parts.push( 'scale(' + s.scale.toFixed( 4 ) + ')' );
+        }
+        return parts.join( ' ' );
     }
 
-    /**
-     * Enforce coverage constraints on the given side state object.
-     * Pan uses object-position (range -50..+50 from centre 50%).
-     * object-position is applied in element space before any rotation and
-     * cannot expose background at any angle (object-fit:cover guarantees fill).
-     *
-     * @param {{ scale:number, offsetX:number, offsetY:number, rotate:number }} s
-     */
-    function enforceCoverage( s ) {
-        s.offsetX = clamp( s.offsetX, -50, 50 );
-        s.offsetY = clamp( s.offsetY, -50, 50 );
-    }
+    /* ═══════════════════════════════════════════════════════════════════
+     *  Editor builder
+     * ═══════════════════════════════════════════════════════════════════ */
 
-    /**
-     * Build the editor UI for a single slider.
-     *
-     * @param {HTMLElement} slider - The .lpc-compare container.
-     */
     function buildEditor( slider ) {
         var id = slider.id;
-        if ( ! id ) {
-            return;
-        }
+        if ( ! id ) { return; }
 
-        // Per-side transform state.
+        // Per-side transform state (new model: pixel translations, free rotation).
         var state = {
-            before: { scale: 1, offsetX: 0, offsetY: 0, rotate: 0 },
-            after:  { scale: 1, offsetX: 0, offsetY: 0, rotate: 0 }
+            before: { scale: 1, rotate: 0, tx: 0, ty: 0 },
+            after:  { scale: 1, rotate: 0, tx: 0, ty: 0 }
         };
 
         var activeSide   = 'before';
         var currentRatio = ( slider.style.aspectRatio || '4/3' ).replace( /\s/g, '' );
         var currentWidth = slider.dataset.lpcWidth || '';
 
-        // Privacy blur mask state (slider-level, not per-side).
+        // Privacy blur mask state (slider-level).
         var blurState = {
             enabled: false, x: 15, y: 25, w: 70, h: 12,
             rotate: 0, intensity: 20, feather: 8
         };
 
-        // Hydrate blur state from server-rendered data attribute.
+        // Hydrate blur state from data attribute.
         if ( slider.dataset.lpcBlur ) {
             try {
                 var savedBlur = JSON.parse( slider.dataset.lpcBlur );
-                if ( savedBlur.enabled !== undefined ) { blurState.enabled   = !! savedBlur.enabled; }
+                if ( savedBlur.enabled   !== undefined ) { blurState.enabled   = !! savedBlur.enabled; }
                 if ( savedBlur.x         !== undefined ) { blurState.x         = parseFloat( savedBlur.x ); }
                 if ( savedBlur.y         !== undefined ) { blurState.y         = parseFloat( savedBlur.y ); }
                 if ( savedBlur.w         !== undefined ) { blurState.w         = parseFloat( savedBlur.w ); }
@@ -139,35 +160,31 @@
                 if ( savedBlur.rotate    !== undefined ) { blurState.rotate    = parseFloat( savedBlur.rotate ); }
                 if ( savedBlur.intensity !== undefined ) { blurState.intensity = parseFloat( savedBlur.intensity ); }
                 if ( savedBlur.feather   !== undefined ) { blurState.feather   = parseFloat( savedBlur.feather ); }
-            } catch ( e ) { /* ignore parse errors */ }
+            } catch ( e ) { /* ignore */ }
         }
 
-        // Read any saved transforms already rendered as inline styles.
-        parseExistingTransform( slider.querySelector( '.lpc-img--before' ), state.before, slider );
-        parseExistingTransform( slider.querySelector( '.lpc-img--after'  ), state.after,  slider );
+        // Read saved transforms from inline styles.
+        parseExistingTransform( slider.querySelector( '.lpc-img--before' ), state.before );
+        parseExistingTransform( slider.querySelector( '.lpc-img--after'  ), state.after  );
 
-        lpcLog( 'buildEditor: slider "' + id + '" initialised' );
-        lpcLog( '  state.before =', JSON.stringify( state.before ) );
-        lpcLog( '  state.after  =', JSON.stringify( state.after  ) );
-        lpcLog( '  currentRatio =', currentRatio, '  currentWidth =', currentWidth || '(unset)' );
+        lpcLog( 'buildEditor:', id, JSON.stringify( state ) );
 
-        // â”€â”€ Edit toggle button â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── Edit toggle button ──────────────────────────────────────────
         var toggleBtn = document.createElement( 'button' );
-        toggleBtn.className = 'lpc-edit-toggle';
-        toggleBtn.type      = 'button';
+        toggleBtn.className   = 'lpc-edit-toggle';
+        toggleBtn.type        = 'button';
         toggleBtn.textContent = '\u270E';
         toggleBtn.title       = 'Edit image positioning';
         slider.appendChild( toggleBtn );
 
-        // â”€â”€ Panel (appended to body to escape overflow:hidden ancestors) â”€â”€
+        // ── Panel (appended to body to escape overflow:hidden) ──────────
         var panel = document.createElement( 'div' );
         panel.className = 'lpc-editor-panel';
         document.body.appendChild( panel );
         panel.innerHTML = buildPanelHTML();
 
-        /** Re-position the panel flush below the slider. */
         function positionPanel() {
-            var rect        = slider.getBoundingClientRect();
+            var rect = slider.getBoundingClientRect();
             panel.style.top   = ( rect.bottom + window.scrollY ) + 'px';
             panel.style.left  = rect.left + 'px';
             panel.style.width = rect.width + 'px';
@@ -212,23 +229,20 @@
             blurPresets:      panel.querySelectorAll( '[data-preset]'           )
         };
 
-        // ── Create / find blur mask element ─────────────────────────────
+        // ── Blur mask element ───────────────────────────────────────────
         var blurMaskEl = slider.querySelector( '.lpc-blur-mask' );
         if ( ! blurMaskEl ) {
             blurMaskEl = document.createElement( 'div' );
             blurMaskEl.className = 'lpc-blur-mask';
-            var dividerInsertRef = slider.querySelector( '.lpc-divider' );
-            if ( dividerInsertRef ) {
-                slider.insertBefore( blurMaskEl, dividerInsertRef );
+            var dividerRef = slider.querySelector( '.lpc-divider' );
+            if ( dividerRef ) {
+                slider.insertBefore( blurMaskEl, dividerRef );
             } else {
                 slider.appendChild( blurMaskEl );
             }
         }
         blurMaskEl.style.display = blurState.enabled ? '' : 'none';
 
-        /**
-         * Apply the current blurState to the blur mask element's inline styles.
-         */
         function applyBlur() {
             if ( ! blurMaskEl ) { return; }
             blurMaskEl.style.display = blurState.enabled ? '' : 'none';
@@ -242,60 +256,32 @@
             blurMaskEl.style.transform    = blurState.rotate !== 0 ? 'rotate(' + blurState.rotate + 'deg)' : '';
         }
 
-        /**
-         * Push the current blurState values to the panel controls.
-         */
         function syncBlurControls() {
-            els.blurEnabled.checked              = blurState.enabled;
+            els.blurEnabled.checked = blurState.enabled;
             els.blurControls.classList.toggle( 'lpc-blur-controls--visible', blurState.enabled );
-            els.blurIntensity.value              = blurState.intensity;
-            els.blurIntensityVal.textContent      = blurState.intensity + 'px';
-            els.blurFeather.value                = blurState.feather;
-            els.blurFeatherVal.textContent        = blurState.feather + 'px';
-            els.blurW.value                      = blurState.w;
-            els.blurWVal.textContent              = blurState.w + '%';
-            els.blurH.value                      = blurState.h;
-            els.blurHVal.textContent              = blurState.h + '%';
-            els.blurRotate.value                 = blurState.rotate;
-            els.blurRotateVal.textContent         = blurState.rotate + '\u00B0';
+            els.blurIntensity.value         = blurState.intensity;
+            els.blurIntensityVal.textContent = blurState.intensity + 'px';
+            els.blurFeather.value           = blurState.feather;
+            els.blurFeatherVal.textContent   = blurState.feather + 'px';
+            els.blurW.value                 = blurState.w;
+            els.blurWVal.textContent         = blurState.w + '%';
+            els.blurH.value                 = blurState.h;
+            els.blurHVal.textContent         = blurState.h + '%';
+            els.blurRotate.value            = blurState.rotate;
+            els.blurRotateVal.textContent    = blurState.rotate + '\u00B0';
         }
 
-        // Initialise blur controls from state.
         syncBlurControls();
         applyBlur();
 
-        // â”€â”€ Toggle open/close â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── Toggle open/close ───────────────────────────────────────────
         toggleBtn.addEventListener( 'click', function ( e ) {
             e.stopPropagation();
             var isOpen = panel.classList.toggle( 'lpc-editor-panel--open' );
             slider.classList.toggle( 'lpc-compare--editing', isOpen );
             if ( isOpen ) {
                 positionPanel();
-                var sliderRect = slider.getBoundingClientRect();
-                var imgBefore  = slider.querySelector( '.lpc-img--before' );
-                var imgAfter   = slider.querySelector( '.lpc-img--after'  );
-                lpcLog( 'Panel opened for slider "' + id + '"' );
-                lpcLog( '  container  w=' + Math.round( sliderRect.width ) + ' h=' + Math.round( sliderRect.height ) );
-                if ( imgBefore ) {
-                    lpcLog( '  img-before naturalW=' + imgBefore.naturalWidth + ' naturalH=' + imgBefore.naturalHeight +
-                            ' renderedW=' + Math.round( imgBefore.getBoundingClientRect().width ) +
-                            ' renderedH=' + Math.round( imgBefore.getBoundingClientRect().height ) );
-                }
-                if ( imgAfter ) {
-                    lpcLog( '  img-after  naturalW=' + imgAfter.naturalWidth + ' naturalH=' + imgAfter.naturalHeight +
-                            ' renderedW=' + Math.round( imgAfter.getBoundingClientRect().width ) +
-                            ' renderedH=' + Math.round( imgAfter.getBoundingClientRect().height ) );
-                }
-                lpcLog( '  active side =', activeSide, '  scale =', state[ activeSide ].scale,
-                        '  pan model: object-position (enabled at any scale)' );
-                if ( imgBefore ) {
-                    var arImg  = imgBefore.naturalWidth / ( imgBefore.naturalHeight || 1 );
-                    var arCont = sliderRect.width / ( sliderRect.height || 1 );
-                    var natOvX = Math.round( Math.max( 0, imgBefore.naturalWidth * ( sliderRect.height / imgBefore.naturalHeight ) - sliderRect.width ) );
-                    var natOvY = Math.round( Math.max( 0, imgBefore.naturalHeight * ( sliderRect.width / imgBefore.naturalWidth ) - sliderRect.height ) );
-                    lpcLog( '  before-img AR=' + arImg.toFixed( 2 ) + '  container AR=' + arCont.toFixed( 2 ),
-                            '  naturalOverflowX~' + natOvX + 'px  naturalOverflowY~' + natOvY + 'px' );
-                }
+                lpcLog( 'Panel opened for', id );
             }
         } );
 
@@ -307,20 +293,13 @@
         window.addEventListener( 'scroll', onViewportChange, { passive: true } );
         window.addEventListener( 'resize', onViewportChange, { passive: true } );
 
-        // â”€â”€ Side tabs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── Side tabs ───────────────────────────────────────────────────
 
-        /**
-         * Switch active side, sync controls, and snap the divider to
-         * reveal mostly that side so the editor can see what they're editing.
-         *
-         * @param {string} side - "before" or "after".
-         */
         function setActiveSide( side ) {
             activeSide = side;
             els.tabBefore.classList.toggle( 'lpc-side-tab--active', side === 'before' );
             els.tabAfter.classList.toggle(  'lpc-side-tab--active', side === 'after'  );
             syncControlsToState();
-            // Snap divider: reveal the active side predominantly.
             var snapPos = side === 'before' ? 75 : 25;
             slider.dispatchEvent( new CustomEvent( 'lpc:setposition', { detail: { position: snapPos } } ) );
         }
@@ -328,240 +307,151 @@
         els.tabBefore.addEventListener( 'click', function () { setActiveSide( 'before' ); } );
         els.tabAfter.addEventListener(  'click', function () { setActiveSide( 'after'  ); } );
 
-        // â”€â”€ Controls â†’ state sync â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
-        /** Push the current state values to the range inputs and value displays. */
-        function syncControlsToState() {
-            var s = state[ activeSide ];
-            els.zoom.value    = s.scale;
-            els.zoomVal.textContent = s.scale.toFixed( 2 ) + 'x';
-            els.panX.value    = s.offsetX;
-            els.panXVal.textContent = s.offsetX.toFixed( 1 ) + '%';
-            els.panY.value    = s.offsetY;
-            els.panYVal.textContent = s.offsetY.toFixed( 1 ) + '%';
-            els.rotate.value  = s.rotate;
-            els.rotateVal.textContent = s.rotate + '\u00B0';
-
-            // Pan range is always ±50 (object-position percentage from centre 50%).
-            // (Panning works at all rotation angles — see applyTransform for axis notes.)
-            els.panX.disabled = false;
-            els.panY.disabled = false;
-
-            // Pan range is always ±50 (object-position percentage from centre 50%).
-            els.panX.min = -50; els.panX.max = 50;
-            els.panY.min = -50; els.panY.max = 50;
-        }
+        // ── Apply transform (THE core function) ─────────────────────────
 
         /**
-         * Apply the current per-side state to the image element's inline
-         * CSS â€” the same properties used in the public view (WYSIWYG).
+         * Enforce constraints and apply CSS to the image element.
          *
-         * @param {string} side - "before" or "after".
+         * @param {string} side – "before" or "after".
          */
         function applyTransform( side ) {
             var img = slider.querySelector( '.lpc-img--' + side );
-            if ( ! img ) {
-                return;
-            }
+            if ( ! img ) { return; }
+
             var s    = state[ side ];
-            var norm = ( ( s.rotate % 360 ) + 360 ) % 360;
+            var rect = slider.getBoundingClientRect();
+            var cw   = rect.width;
+            var ch   = rect.height;
 
-            // Two-component pan model (coverage-safe on both axes):
-            //
-            // 1. object-position: (50-X)% (50-Y)%
-            //    Shifts the visible crop within the element. Zero coverage risk — the
-            //    element always fills the container; only the cropped region moves.
-            //    Handles ALL intrinsic image overflow (portrait Y, landscape X, etc.).
-            //
-            // 2. transform: translate(X*(scale-1)%, Y*(scale-1)%) scale(s) [rotate]
-            //    At scale=1 the translate is 0 (element fills container exactly).
-            //    At scale>1 the element overflows (scale-1)/2*cDim per side, which is
-            //    exactly what translate consumes — no background is ever exposed.
-            //
-            // Both components use +offsetX = image moves right semantics:
-            //   object-position X decreases  → shows left part  → image goes right.
-            //   translate X increases         → element goes right → container shows left part → image goes right.
+            if ( cw < 1 || ch < 1 ) { return; }
 
-            // object-position shifts the visible crop within element space.
-            // It is always coverage-safe regardless of rotation angle.
-            if ( s.offsetX !== 0 || s.offsetY !== 0 ) {
-                img.style.objectPosition = ( 50 - s.offsetX ) + '% ' + ( 50 - s.offsetY ) + '%';
+            // Enforce minimum scale for rotation coverage.
+            var sMin = minScaleForRotation( cw, ch, s.rotate );
+            if ( s.scale < sMin ) {
+                s.scale = sMin;
+            }
+
+            // Clamp pan using object-fit:cover overflow (independent of rotation/scale).
+            var range = coverPanRange( img.naturalWidth, img.naturalHeight, cw, ch, s.scale );
+            s.tx = clamp( s.tx, -range.maxPanX, range.maxPanX );
+            s.ty = clamp( s.ty, -range.maxPanY, range.maxPanY );
+
+            // Apply CSS (WYSIWYG – same CSS the PHP render produces).
+            // Pan via object-position; scale+rotate via transform.
+            img.style.transform = buildTransformCSS( s ) || '';
+            if ( Math.abs( s.tx ) > 0.01 || Math.abs( s.ty ) > 0.01 ) {
+                img.style.objectPosition = 'calc(50% + ' + s.tx.toFixed( 2 ) + 'px) calc(50% + ' + s.ty.toFixed( 2 ) + 'px)';
             } else {
                 img.style.objectPosition = '';
             }
-
-            var parts = [];
-            // translate(X*(scale-1)%, Y*(scale-1)%) adds extra pan range at scale>1.
-            // At 90°/270° the translate axis is visually perpendicular to its intended
-            // direction, so skip it and rely solely on object-position for pan.
-            if ( norm !== 90 && norm !== 270 ) {
-                var txPct = s.offsetX * ( s.scale - 1 );
-                var tyPct = s.offsetY * ( s.scale - 1 );
-                if ( Math.abs( txPct ) > 0.001 || Math.abs( tyPct ) > 0.001 ) {
-                    parts.push( 'translate(' + txPct.toFixed( 3 ) + '%, ' + tyPct.toFixed( 3 ) + '%)' );
-                }
-            }
-            if ( s.scale !== 1 ) {
-                parts.push( 'scale(' + s.scale + ')' );
-            }
-            if ( s.rotate !== 0 ) {
-                parts.push( 'rotate(' + s.rotate + 'deg)' );
-            }
-            img.style.transform = parts.length ? parts.join( ' ' ) : '';
         }
 
-        // â”€â”€ Zoom â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-                els.zoom.addEventListener( 'input', function () {
-            var s   = state[ activeSide ];
-            s.scale = parseFloat( els.zoom.value );
-            els.zoomVal.textContent = s.scale.toFixed( 2 ) + 'x';
-            enforceCoverage( s );
-            els.panX.value = s.offsetX;
-            els.panXVal.textContent = s.offsetX.toFixed( 1 ) + '%';
-            els.panY.value = s.offsetY;
-            els.panYVal.textContent = s.offsetY.toFixed( 1 ) + '%';
+        function applyBothTransforms() {
+            applyTransform( 'before' );
+            applyTransform( 'after'  );
+        }
+
+        // ── Sync controls ↔ state ───────────────────────────────────────
+
+        function syncControlsToState() {
+            var s    = state[ activeSide ];
+            var img  = slider.querySelector( '.lpc-img--' + activeSide );
+            var rect = slider.getBoundingClientRect();
+            var cw   = rect.width  || 600;
+            var ch   = rect.height || 450;
+
+            els.zoom.value            = s.scale;
+            els.zoomVal.textContent   = s.scale.toFixed( 2 ) + 'x';
+            els.rotate.value          = s.rotate;
+            els.rotateVal.textContent = s.rotate.toFixed( 1 ) + '\u00B0';
+
+            // Pan slider ranges from object-fit:cover overflow (independent of rotation/scale).
+            var iw    = img ? ( img.naturalWidth  || cw ) : cw;
+            var ih    = img ? ( img.naturalHeight || ch ) : ch;
+            var range = coverPanRange( iw, ih, cw, ch, s.scale );
+            var maxPanX = Math.max( 1, Math.ceil( range.maxPanX ) );
+            var maxPanY = Math.max( 1, Math.ceil( range.maxPanY ) );
+            els.panX.min = -maxPanX; els.panX.max = maxPanX;
+            els.panY.min = -maxPanY; els.panY.max = maxPanY;
+            els.panX.value          = s.tx;
+            els.panXVal.textContent = s.tx.toFixed( 1 ) + 'px';
+            els.panY.value          = s.ty;
+            els.panYVal.textContent = s.ty.toFixed( 1 ) + 'px';
+        }
+
+        // ── Zoom control ────────────────────────────────────────────────
+        els.zoom.addEventListener( 'input', function () {
+            state[ activeSide ].scale = parseFloat( els.zoom.value );
             applyTransform( activeSide );
-        } );
-
-        // â”€â”€ Pan X â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-                els.panX.addEventListener( 'input', function () {
-            var s = state[ activeSide ];
-            s.offsetX = clamp( parseFloat( els.panX.value ), -50, 50 );
-            els.panX.value = s.offsetX;
-            els.panXVal.textContent = s.offsetX.toFixed( 1 ) + '%';
-            applyTransform( activeSide );
-        } );
-
-        // â”€â”€ Pan Y â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-                els.panY.addEventListener( 'input', function () {
-            var s = state[ activeSide ];
-            s.offsetY = clamp( parseFloat( els.panY.value ), -50, 50 );
-            els.panY.value = s.offsetY;
-            els.panYVal.textContent = s.offsetY.toFixed( 1 ) + '%';
-            applyTransform( activeSide );
-        } );
-
-        // â”€â”€ Rotate: snap to 90Â° multiples â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        els.rotate.addEventListener( 'input', function () {
-            var raw     = parseFloat( els.rotate.value );
-            var snapped = Math.round( raw / 90 ) * 90;
-            var s       = state[ activeSide ];
-            s.rotate    = snapped;
-            els.rotate.value = snapped;
-            els.rotateVal.textContent = snapped + '\u00B0';
-
-            // Auto-raise scale if needed to maintain coverage after rotation.
-            var minScale = minScaleForRotation( snapped, slider );
-            if ( s.scale < minScale ) {
-                s.scale = parseFloat( minScale.toFixed( 2 ) );
-                els.zoom.value = s.scale;
-                els.zoomVal.textContent = s.scale.toFixed( 2 ) + 'x';
-            }
-
-            // Zero pan at 90Â°/270Â° (axes are swapped by rotation).
-            enforceCoverage( s );
             syncControlsToState();
-            applyTransform( activeSide );
         } );
 
-        // â”€â”€ Reset â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        // -- Drag-to-pan on the slider container ----------------------------------
-        //
-        // When the editor panel is open, dragging anywhere on the image container
-        // pans the active side's image. Pointer capture keeps tracking smooth even
-        // when the cursor leaves the element during a fast drag.
+        // ── Pan X control ───────────────────────────────────────────────
+        els.panX.addEventListener( 'input', function () {
+            state[ activeSide ].tx = parseFloat( els.panX.value );
+            applyTransform( activeSide );
+            syncControlsToState();
+        } );
+
+        // ── Pan Y control ───────────────────────────────────────────────
+        els.panY.addEventListener( 'input', function () {
+            state[ activeSide ].ty = parseFloat( els.panY.value );
+            applyTransform( activeSide );
+            syncControlsToState();
+        } );
+
+        // ── Rotate control ──────────────────────────────────────────────
+        els.rotate.addEventListener( 'input', function () {
+            state[ activeSide ].rotate = parseFloat( els.rotate.value );
+            applyTransform( activeSide );
+            syncControlsToState();
+        } );
+
+        // ── Drag-to-pan on slider container ─────────────────────────────
 
         var dragActive = false;
         var dragLastX  = 0;
         var dragLastY  = 0;
 
         slider.addEventListener( 'pointerdown', function ( e ) {
-            if ( ! panel.classList.contains( 'lpc-editor-panel--open' ) ) {
-                return;
-            }
-            if ( e.button !== 0 ) {
-                return;
-            }
-            if ( e.target.closest( '.lpc-edit-toggle' ) ) {
-                return;
-            }
-            // Yield to slider divider drag while Shift is held (preview mode).
-            if ( e.shiftKey ) {
-                return;
-            }
-            // Yield to blur mask positioning while Ctrl/Meta is held.
-            if ( e.ctrlKey || e.metaKey ) {
-                return;
-            }
-            var s    = state[ activeSide ];
-            var norm = ( ( s.rotate % 360 ) + 360 ) % 360;
-            lpcLog( 'pointerdown on "' + id + '" (' + activeSide + ')' +
-                    '  scale=' + s.scale +
-                    '  offsetX=' + s.offsetX.toFixed( 1 ) + '%' +
-                    '  offsetY=' + s.offsetY.toFixed( 1 ) + '%' +
-                    '  rotate-norm=' + norm + 'deg' );
+            if ( ! panel.classList.contains( 'lpc-editor-panel--open' ) ) { return; }
+            if ( e.button !== 0 ) { return; }
+            if ( e.target.closest( '.lpc-edit-toggle' ) ) { return; }
+            // Shift → slider divider drag.
+            if ( e.shiftKey ) { return; }
+            // Ctrl/Meta → blur mask positioning.
+            if ( e.ctrlKey || e.metaKey ) { return; }
+
+            e.preventDefault();
             dragActive = true;
             dragLastX  = e.clientX;
             dragLastY  = e.clientY;
             slider.setPointerCapture( e.pointerId );
             slider.classList.add( 'lpc-compare--panning-active' );
-            lpcLog( '  → drag STARTED' );
-            e.preventDefault();
         } );
 
         slider.addEventListener( 'pointermove', function ( e ) {
-            if ( ! dragActive ) {
-                return;
-            }
-            var s    = state[ activeSide ];
-            var rect = slider.getBoundingClientRect();
-            var dx   = e.clientX - dragLastX;
-            var dy   = e.clientY - dragLastY;
+            if ( ! dragActive ) { return; }
+            var s  = state[ activeSide ];
+            var dx = e.clientX - dragLastX;
+            var dy = e.clientY - dragLastY;
             dragLastX = e.clientX;
             dragLastY = e.clientY;
 
-            // Drag sensitivity = sum of both pan components per 50 units of offsetX/Y:
-            //   natOv*  = object-position range (intrinsic overflow, pixels per side)
-            //   scaleOv* = translate range   (scale-induced overhang, pixels per side)
-            var img    = slider.querySelector( '.lpc-img--' + activeSide );
-            var nW     = ( img && img.naturalWidth  ) || 1;
-            var nH     = ( img && img.naturalHeight ) || 1;
-            var natOvX  = Math.max( 0, nW * ( rect.height / nH ) - rect.width  ) / 2;
-            var natOvY  = Math.max( 0, nH * ( rect.width  / nW ) - rect.height ) / 2;
-            var scaleOvX = ( s.scale - 1 ) / 2 * rect.width;
-            var scaleOvY = ( s.scale - 1 ) / 2 * rect.height;
-            var rangeX  = natOvX + scaleOvX;
-            var rangeY  = natOvY + scaleOvY;
-            // At 90°/270° the image is rotated so visual axes differ from element axes.
-            // 90° CW:  visual-x (+right) = element -y  → dx maps to offsetY (+=)
-            //          visual-y (+down)  = element +x  → dy maps to offsetX (+=)
-            // 270° CW: visual-x (+right) = element +y  → dx maps to offsetY (-=)
-            //          visual-y (+down)  = element -x  → dy maps to offsetX (-=)
-            // sensitivity: dx uses rangeY (element-Y overflow), dy uses rangeX.
-            var dragNorm = ( ( s.rotate % 360 ) + 360 ) % 360;
-            if ( dragNorm === 90 ) {
-                if ( rangeY > 1 ) { s.offsetY = clamp( s.offsetY + dx / rangeY * 50, -50, 50 ); }
-                if ( rangeX > 1 ) { s.offsetX = clamp( s.offsetX + dy / rangeX * 50, -50, 50 ); }
-            } else if ( dragNorm === 270 ) {
-                if ( rangeY > 1 ) { s.offsetY = clamp( s.offsetY - dx / rangeY * 50, -50, 50 ); }
-                if ( rangeX > 1 ) { s.offsetX = clamp( s.offsetX - dy / rangeX * 50, -50, 50 ); }
-            } else {
-                // +dx/+dy = grab-and-drag: drag right → image moves right.
-                if ( rangeX > 1 ) { s.offsetX = clamp( s.offsetX + dx / rangeX * 50, -50, 50 ); }
-                if ( rangeY > 1 ) { s.offsetY = clamp( s.offsetY + dy / rangeY * 50, -50, 50 ); }
-            }
-
-            els.panX.value = s.offsetX;
-            els.panXVal.textContent = s.offsetX.toFixed( 1 ) + '%';
-            els.panY.value = s.offsetY;
-            els.panYVal.textContent = s.offsetY.toFixed( 1 ) + '%';
+            // Convert screen-space delta to element-local delta:
+            // reverse the element's CSS rotation then divide by scale so
+            // dragging feels 1:1 with content movement on screen.
+            var rad  = s.rotate * Math.PI / 180;
+            var cosT = Math.cos( rad );
+            var sinT = Math.sin( rad );
+            s.tx += (  dx * cosT + dy * sinT ) / s.scale;
+            s.ty += ( -dx * sinT + dy * cosT ) / s.scale;
             applyTransform( activeSide );
+            syncControlsToState();
         } );
 
         function endDrag() {
-            if ( ! dragActive ) {
-                return;
-            }
+            if ( ! dragActive ) { return; }
             dragActive = false;
             slider.classList.remove( 'lpc-compare--panning-active' );
         }
@@ -569,35 +459,22 @@
         slider.addEventListener( 'pointerup',     endDrag );
         slider.addEventListener( 'pointercancel', endDrag );
 
-        // -- Auto side-switch on hover ----------------------------------------
-        //
-        // When the panel is open and no drag is in progress, detect which image
-        // the pointer is over and automatically switch the active side so the
-        // user can pan/zoom whichever image they hover over without clicking tabs.
+        // ── Auto side-switch on hover ───────────────────────────────────
 
         slider.addEventListener( 'pointermove', function ( e ) {
-            if ( ! panel.classList.contains( 'lpc-editor-panel--open' ) ) {
-                return;
-            }
-            if ( dragActive ) {
-                return;  // Mid-drag: keep the locked side.
-            }
+            if ( ! panel.classList.contains( 'lpc-editor-panel--open' ) ) { return; }
+            if ( dragActive ) { return; }
             var rect       = slider.getBoundingClientRect();
             var dividerEl  = slider.querySelector( '.lpc-divider' );
             var isVert     = slider.dataset.direction === 'vertical';
-            var dividerPct;
-            if ( dividerEl ) {
-                // Read the position the slider JS set on the divider element.
-                dividerPct = parseFloat( isVert ? dividerEl.style.top : dividerEl.style.left ) || 50;
-            } else {
-                dividerPct = 50;
-            }
+            var dividerPct = dividerEl
+                ? ( parseFloat( isVert ? dividerEl.style.top : dividerEl.style.left ) || 50 )
+                : 50;
             var pct = isVert
                 ? ( e.clientY - rect.top  ) / rect.height * 100
                 : ( e.clientX - rect.left ) / rect.width  * 100;
             var hoveredSide = ( pct <= dividerPct ) ? 'before' : 'after';
             if ( hoveredSide !== activeSide ) {
-                // Switch side without snapping the divider — just update controls.
                 activeSide = hoveredSide;
                 els.tabBefore.classList.toggle( 'lpc-side-tab--active', activeSide === 'before' );
                 els.tabAfter.classList.toggle(  'lpc-side-tab--active', activeSide === 'after'  );
@@ -605,16 +482,14 @@
             }
         } );
 
-        // -- Shift-key preview -----------------------------------------------
-        //
-        // While Shift is held the slider divider becomes draggable again so the
-        // editor can preview position changes live. A class drives the cursor.
+        // ── Shift-key preview (slider divider draggable) ────────────────
 
         window.addEventListener( 'keydown', function ( e ) {
             if ( e.key === 'Shift' && panel.classList.contains( 'lpc-editor-panel--open' ) ) {
                 slider.classList.add( 'lpc-compare--shift-preview' );
             }
-            if ( ( e.key === 'Control' || e.key === 'Meta' ) && panel.classList.contains( 'lpc-editor-panel--open' ) && blurState.enabled ) {
+            if ( ( e.key === 'Control' || e.key === 'Meta' ) &&
+                 panel.classList.contains( 'lpc-editor-panel--open' ) && blurState.enabled ) {
                 slider.classList.add( 'lpc-compare--ctrl-active' );
             }
         } );
@@ -628,43 +503,28 @@
             }
         } );
 
-        // -- Mouse-wheel zoom -----------------------------------------------------
-        //
-        // Scrolling over the slider when the editor is open zooms the active image.
-        // Each wheel tick adjusts scale by +/-0.05, clamped to [1, 3].
+        // ── Mouse wheel → zoom ──────────────────────────────────────────
 
         slider.addEventListener( 'wheel', function ( e ) {
-            if ( ! panel.classList.contains( 'lpc-editor-panel--open' ) ) {
-                return;
-            }
+            if ( ! panel.classList.contains( 'lpc-editor-panel--open' ) ) { return; }
             e.preventDefault();
 
             var s     = state[ activeSide ];
             var delta = e.deltaY > 0 ? -0.05 : 0.05;
-            s.scale   = parseFloat( clamp( s.scale + delta, 1, 3 ).toFixed( 2 ) );
+            if ( e.shiftKey ) { delta *= 0.2; }  // Fine control.
 
-            els.zoom.value = s.scale;
-            els.zoomVal.textContent = s.scale.toFixed( 2 ) + 'x';
-
-            // Pan range is fixed (±50); clamp and sync controls.
-            enforceCoverage( s );
-            els.panX.value = s.offsetX;
-            els.panXVal.textContent = s.offsetX.toFixed( 1 ) + '%';
-            els.panY.value = s.offsetY;
-            els.panYVal.textContent = s.offsetY.toFixed( 1 ) + '%';
-
+            s.scale = clamp( s.scale + delta, 1, 3 );
             applyTransform( activeSide );
+            syncControlsToState();
         }, { passive: false } );
 
+        // ── Reset ───────────────────────────────────────────────────────
+
         els.resetBtn.addEventListener( 'click', function () {
-            // Reset both sides — image URLs are stored in slider.dataset (not in state)
-            // so they are unaffected. The user must still click Save to persist.
-            state.before = { scale: 1, offsetX: 0, offsetY: 0, rotate: 0 };
-            state.after  = { scale: 1, offsetX: 0, offsetY: 0, rotate: 0 };
+            state.before = { scale: 1, rotate: 0, tx: 0, ty: 0 };
+            state.after  = { scale: 1, rotate: 0, tx: 0, ty: 0 };
             syncControlsToState();
-            applyTransform( 'before' );
-            applyTransform( 'after'  );
-            // Reset blur mask to defaults (disabled).
+            applyBothTransforms();
             blurState.enabled = false;
             blurState.x = 15; blurState.y = 25;
             blurState.w = 70; blurState.h = 12;
@@ -673,21 +533,14 @@
             applyBlur();
         } );
 
-        // â”€â”€ Direction toggle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── Direction toggle ────────────────────────────────────────────
 
-        /**
-         * Switch the slider direction and update data-direction so the
-         * dynamic isVertical() check in lpc-slider.js picks it up.
-         *
-         * @param {string} dir - "horizontal" or "vertical".
-         */
         function setDirection( dir ) {
             slider.dataset.direction = dir;
             slider.classList.remove( 'lpc-compare--horizontal', 'lpc-compare--vertical' );
             slider.classList.add( 'lpc-compare--' + dir );
             els.dirH.classList.toggle( 'lpc-direction-btn--active', dir === 'horizontal' );
             els.dirV.classList.toggle( 'lpc-direction-btn--active', dir === 'vertical'   );
-            // Let the slider re-apply its own clip-path / divider position.
             slider.dispatchEvent( new CustomEvent( 'lpc:refresh' ) );
         }
 
@@ -698,23 +551,16 @@
         els.dirH.classList.toggle( 'lpc-direction-btn--active', currentDir === 'horizontal' );
         els.dirV.classList.toggle( 'lpc-direction-btn--active', currentDir === 'vertical'   );
 
-        // â”€â”€ Aspect ratio â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── Aspect ratio ────────────────────────────────────────────────
 
-        /**
-         * Apply a CSS aspect ratio string to the slider and its parent
-         * .lp-concern-slider, then reposition the panel.
-         *
-         * @param {string} ratioStr - e.g. "16/9".
-         */
         function applyRatio( ratioStr ) {
-            if ( ! /^\d+\/\d+$/.test( ratioStr ) ) {
-                return;
-            }
+            if ( ! /^\d+\/\d+$/.test( ratioStr ) ) { return; }
             currentRatio = ratioStr;
             slider.dispatchEvent( new CustomEvent( 'lpc:setratio', { detail: { ratio: ratioStr } } ) );
-            // Reposition panel since slider height may have changed.
-            setTimeout( positionPanel, 50 );
-            // Sync preset button active state.
+            setTimeout( function () {
+                applyBothTransforms();
+                positionPanel();
+            }, 50 );
             els.ratioBtns.forEach( function ( btn ) {
                 btn.classList.toggle( 'lpc-ratio-btn--active', btn.dataset.ratio === ratioStr );
             } );
@@ -722,29 +568,16 @@
         }
 
         els.ratioBtns.forEach( function ( btn ) {
-            // Mark the current ratio active on first render.
             btn.classList.toggle( 'lpc-ratio-btn--active', btn.dataset.ratio === currentRatio );
-            btn.addEventListener( 'click', function () {
-                applyRatio( btn.dataset.ratio );
-            } );
+            btn.addEventListener( 'click', function () { applyRatio( btn.dataset.ratio ); } );
         } );
-
-        // Initialise custom input with current ratio.
         els.ratioInput.value = currentRatio.replace( '/', ':' );
-
         els.ratioInput.addEventListener( 'change', function () {
-            // Accept "W:H" or "W/H" format.
-            var val = els.ratioInput.value.trim().replace( ':', '/' );
-            applyRatio( val );
+            applyRatio( els.ratioInput.value.trim().replace( ':', '/' ) );
         } );
 
-        // â”€â”€ Media library â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // ── Container width ─────────────────────────────────────────────
 
-        // -- Container width -------------------------------------------------------
-
-        /**
-         * Sync the active state on width preset buttons.
-         */
         function updateWidthBtnState() {
             var active = currentWidth || '100%';
             els.widthBtns.forEach( function ( btn ) {
@@ -752,15 +585,7 @@
             } );
         }
 
-        /**
-         * Apply a CSS width value to the slider container (WYSIWYG) and sync controls.
-         *
-         * Passing '100%' or an empty string restores the native 100% width.
-         *
-         * @param {string} widthVal - CSS width value (e.g. '80%') or '' for default.
-         */
         function applyWidth( widthVal ) {
-            // Normalise '100%' to '' so the default renders without an inline override.
             currentWidth = ( widthVal === '100%' ) ? '' : widthVal;
             if ( ! currentWidth ) {
                 slider.style.width       = '';
@@ -777,11 +602,12 @@
                 els.widthRange.value = parseInt( displayVal, 10 );
             }
             updateWidthBtnState();
-            // Reposition editor panel since slider width may have changed.
-            setTimeout( positionPanel, 50 );
+            setTimeout( function () {
+                applyBothTransforms();
+                positionPanel();
+            }, 50 );
         }
 
-        // Initialise width controls from current slider DOM state.
         var initWidthPct = /^\d+%$/.test( currentWidth ) ? parseInt( currentWidth, 10 ) : 100;
         els.widthRange.value     = initWidthPct;
         els.widthVal.textContent = currentWidth || '100%';
@@ -790,16 +616,14 @@
         els.widthRange.addEventListener( 'input', function () {
             applyWidth( els.widthRange.value + '%' );
         } );
-
         els.widthBtns.forEach( function ( btn ) {
-            btn.addEventListener( 'click', function () {
-                applyWidth( btn.dataset.width );
-            } );
+            btn.addEventListener( 'click', function () { applyWidth( btn.dataset.width ); } );
         } );
+
+        // ── Media library ───────────────────────────────────────────────
+
         els.mediaBtn.addEventListener( 'click', function () {
-            if ( ! window.wp || ! window.wp.media ) {
-                return;
-            }
+            if ( ! window.wp || ! window.wp.media ) { return; }
             var frame = wp.media( {
                 title:    'Select ' + activeSide + ' image',
                 multiple: false,
@@ -810,38 +634,34 @@
                 var img = slider.querySelector( '.lpc-img--' + activeSide );
                 if ( img ) {
                     img.src = attachment.url;
-                    img.removeAttribute( 'srcset' );   // Clear stale srcset; regenerated after save + reload.
+                    img.removeAttribute( 'srcset' );
                     slider.dataset[ activeSide + 'Url' ] = attachment.url;
-                    slider.dataset[ activeSide + 'Id'  ] = attachment.id;   // Store ID for server-side srcset.
+                    slider.dataset[ activeSide + 'Id'  ] = attachment.id;
                 }
             } );
             frame.open();
         } );
 
-        // -- Blur controls ----------------------------------------------------
+        // ── Blur controls ───────────────────────────────────────────────
 
-        /** Toggle blur enabled state. */
         els.blurEnabled.addEventListener( 'change', function () {
             blurState.enabled = els.blurEnabled.checked;
             els.blurControls.classList.toggle( 'lpc-blur-controls--visible', blurState.enabled );
             applyBlur();
         } );
 
-        /** Blur intensity (px). */
         els.blurIntensity.addEventListener( 'input', function () {
             blurState.intensity = parseInt( els.blurIntensity.value, 10 );
             els.blurIntensityVal.textContent = blurState.intensity + 'px';
             applyBlur();
         } );
 
-        /** Blur feather / border-radius (px). */
         els.blurFeather.addEventListener( 'input', function () {
             blurState.feather = parseInt( els.blurFeather.value, 10 );
             els.blurFeatherVal.textContent = blurState.feather + 'px';
             applyBlur();
         } );
 
-        /** Blur width (%). */
         els.blurW.addEventListener( 'input', function () {
             blurState.w = parseInt( els.blurW.value, 10 );
             els.blurWVal.textContent = blurState.w + '%';
@@ -849,7 +669,6 @@
             applyBlur();
         } );
 
-        /** Blur height (%). */
         els.blurH.addEventListener( 'input', function () {
             blurState.h = parseInt( els.blurH.value, 10 );
             els.blurHVal.textContent = blurState.h + '%';
@@ -857,14 +676,12 @@
             applyBlur();
         } );
 
-        /** Blur rotation (deg). */
         els.blurRotate.addEventListener( 'input', function () {
             blurState.rotate = parseInt( els.blurRotate.value, 10 );
             els.blurRotateVal.textContent = blurState.rotate + '\u00B0';
             applyBlur();
         } );
 
-        /** Blur presets. */
         els.blurPresets.forEach( function ( btn ) {
             btn.addEventListener( 'click', function () {
                 var preset = btn.dataset.preset;
@@ -885,7 +702,7 @@
             } );
         } );
 
-        // -- Ctrl+drag blur mask positioning ----------------------------------
+        // ── Ctrl+drag blur mask positioning ─────────────────────────────
 
         var blurDragActive  = false;
         var blurDragStartX  = 0;
@@ -936,21 +753,16 @@
             }
         } );
 
-        // -- Save -------------------------------------------------------------
+        // ── Save ────────────────────────────────────────────────────────
+
         els.saveBtn.addEventListener( 'click', function () {
             saveSide( 'before', function () {
                 saveSide( 'after', showSaved );
             } );
         } );
 
-        /**
-         * POST one side's transform data (plus ratio and width) to the AJAX endpoint.
-         *
-         * @param {string}   side     - "before" or "after".
-         * @param {Function} callback - Called on XHR load.
-         */
         function saveSide( side, callback ) {
-            els.saving.textContent = 'Savingâ€¦';
+            els.saving.textContent = 'Saving\u2026';
             els.saving.classList.add( 'lpc-saving-indicator--visible' );
 
             var s    = state[ side ];
@@ -960,14 +772,14 @@
             data.append( 'post_id',   lpcEditor.postId );
             data.append( 'slider_id', id );
             data.append( 'side',      side );
-            data.append( 'scale',     s.scale   );
-            data.append( 'offsetX',   s.offsetX );
-            data.append( 'offsetY',   s.offsetY );
-            data.append( 'rotate',    s.rotate  );
+            data.append( 'scale',     s.scale  );
+            data.append( 'tx',        s.tx     );
+            data.append( 'ty',        s.ty     );
+            data.append( 'rotate',    s.rotate );
             data.append( 'ratio',     currentRatio );
-            data.append( 'width',     currentWidth );  // Empty string clears saved width.
+            data.append( 'width',     currentWidth );
 
-            // Blur mask data (slider-level, sent with both sides).
+            // Blur (slider-level).
             data.append( 'blur_enabled',   blurState.enabled ? '1' : '0' );
             data.append( 'blur_x',         blurState.x );
             data.append( 'blur_y',         blurState.y );
@@ -978,14 +790,10 @@
             data.append( 'blur_feather',   blurState.feather );
 
             var imgUrl = slider.dataset[ side + 'Url' ] || '';
-            if ( imgUrl ) {
-                data.append( 'image_url', imgUrl );
-            }
+            if ( imgUrl ) { data.append( 'image_url', imgUrl ); }
 
             var imgId = parseInt( slider.dataset[ side + 'Id' ] || '0', 10 );
-            if ( imgId ) {
-                data.append( 'image_id', imgId );   // Avoids URL lookup on next render.
-            }
+            if ( imgId ) { data.append( 'image_id', imgId ); }
 
             var xhr = new XMLHttpRequest();
             xhr.open( 'POST', lpcEditor.ajaxUrl );
@@ -994,7 +802,6 @@
             xhr.send( data );
         }
 
-        /** Flash a brief "Saved âœ“" message. */
         function showSaved() {
             els.saving.textContent = 'Saved \u2713';
             els.saving.classList.add( 'lpc-saving-indicator--visible' );
@@ -1003,49 +810,57 @@
             }, 2000 );
         }
 
-        // Initialise UI.
+        // Initialise.
         setActiveSide( 'before' );
-        // Dispatch setposition(75) to show "before" side without a side-effect click.
         slider.dispatchEvent( new CustomEvent( 'lpc:setposition', { detail: { position: 75 } } ) );
     }
 
-    // â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    /* ═══════════════════════════════════════════════════════════════════
+     *  Helpers
+     * ═══════════════════════════════════════════════════════════════════ */
 
     /**
      * Parse inline transform CSS from an image element into a state object.
      *
+     * Supports both the new model (translate px) and the legacy model
+     * (translate %, object-position) for backward compatibility.
+     *
      * @param {HTMLImageElement|null} img
-     * @param {{ scale:number, offsetX:number, offsetY:number, rotate:number }} s
+     * @param {{ scale: number, rotate: number, tx: number, ty: number }} s
      */
-    function parseExistingTransform( img, s, slider ) {
-        if ( ! img ) {
+    function parseExistingTransform( img, s ) {
+        if ( ! img ) { return; }
+
+        var t = img.style.transform || '';
+
+        // Extract scale.
+        var ms = t.match( /scale\(\s*([-\d.]+)\s*\)/ );
+        if ( ms ) { s.scale = parseFloat( ms[ 1 ] ); }
+
+        // Extract rotate.
+        var mr = t.match( /rotate\(\s*([-\d.]+)deg\s*\)/ );
+        if ( mr ) { s.rotate = parseFloat( mr[ 1 ] ); }
+
+        // New model: pan stored as object-position calc(50% ± Xpx) calc(50% ± Ypx).
+        var op  = img.style.objectPosition || '';
+        var mop = op.match( /calc\(\s*50%\s*([+-])\s*([\d.]+)px\s*\)\s+calc\(\s*50%\s*([+-])\s*([\d.]+)px\s*\)/ );
+        if ( mop ) {
+            s.tx = parseFloat( mop[ 1 ] + mop[ 2 ] );
+            s.ty = parseFloat( mop[ 3 ] + mop[ 4 ] );
             return;
         }
-        // Read scale and rotate from transform string first (needed for legacy fallback).
-        if ( img.style.transform ) {
-            var t  = img.style.transform;
-            var ms = t.match( /scale\(\s*([-\d.]+)\s*\)/ );
-            var mr = t.match( /rotate\(\s*([-\d.]+)deg\s*\)/ );
-            if ( ms ) { s.scale  = parseFloat( ms[ 1 ] ); }
-            if ( mr ) { s.rotate = parseFloat( mr[ 1 ] ); }
+
+        // Legacy v2.0.0: translate(tx px, ty px) in transform (screen-space pixels).
+        // Divide by scale to get approximate element-space pan.
+        var mtPx = t.match( /translate\(\s*([-\d.]+)px\s*,\s*([-\d.]+)px\s*\)/ );
+        if ( mtPx ) {
+            var legacyScale = s.scale || 1;
+            s.tx = parseFloat( mtPx[ 1 ] ) / legacyScale;
+            s.ty = parseFloat( mtPx[ 2 ] ) / legacyScale;
+            return;
         }
-        // Read offsetX/Y from object-position (new model: opX = 50 - offsetX).
-        if ( img.style.objectPosition ) {
-            var op = img.style.objectPosition.split( /\s+/ );
-            if ( op.length >= 2 ) {
-                var opX = parseFloat( op[ 0 ] );
-                var opY = parseFloat( op[ 1 ] );
-                if ( ! isNaN( opX ) ) { s.offsetX = clamp( 50 - opX, -50, 50 ); }
-                if ( ! isNaN( opY ) ) { s.offsetY = clamp( 50 - opY, -50, 50 ); }
-            }
-        } else if ( img.style.transform && s.scale > 1 ) {
-            // Legacy fallback: translate was offsetX*(scale-1). Reverse: offsetX = txPct/(scale-1).
-            var mt = img.style.transform.match( /translate\(\s*([-\d.]+)%\s*,\s*([-\d.]+)%\s*\)/ );
-            if ( mt ) {
-                s.offsetX = clamp( parseFloat( mt[ 1 ] ) / ( s.scale - 1 ), -50, 50 );
-                s.offsetY = clamp( parseFloat( mt[ 2 ] ) / ( s.scale - 1 ), -50, 50 );
-            }
-        }
+
+        // Legacy v1: translate in % + object-position — treat as zero pan.
     }
 
     /**
@@ -1086,22 +901,22 @@
                 '<div class="lpc-control">' +
                     '<label>Rotate</label>' +
                     '<div class="lpc-control-row">' +
-                        '<input type="range" class="lpc-range-rotate" min="-180" max="180" step="1" value="0">' +
-                        '<span class="lpc-control-value lpc-val-rotate">0\u00B0</span>' +
+                        '<input type="range" class="lpc-range-rotate" min="-180" max="180" step="0.5" value="0">' +
+                        '<span class="lpc-control-value lpc-val-rotate">0.0\u00B0</span>' +
                     '</div>' +
                 '</div>' +
                 '<div class="lpc-control">' +
                     '<label>Pan X</label>' +
                     '<div class="lpc-control-row">' +
-                        '<input type="range" class="lpc-range-panx" min="-50" max="50" step="0.5" value="0">' +
-                        '<span class="lpc-control-value lpc-val-panx">0.0%</span>' +
+                        '<input type="range" class="lpc-range-panx" min="-300" max="300" step="0.5" value="0">' +
+                        '<span class="lpc-control-value lpc-val-panx">0.0px</span>' +
                     '</div>' +
                 '</div>' +
                 '<div class="lpc-control">' +
                     '<label>Pan Y</label>' +
                     '<div class="lpc-control-row">' +
-                        '<input type="range" class="lpc-range-pany" min="-50" max="50" step="0.5" value="0">' +
-                        '<span class="lpc-control-value lpc-val-pany">0.0%</span>' +
+                        '<input type="range" class="lpc-range-pany" min="-300" max="300" step="0.5" value="0">' +
+                        '<span class="lpc-control-value lpc-val-pany">0.0px</span>' +
                     '</div>' +
                 '</div>' +
 
@@ -1191,7 +1006,6 @@
         );
     }
 
-    /** Initialise editors for all editable sliders on the page. */
     function init() {
         document.querySelectorAll( '.lpc-compare[data-lpc-editable]' ).forEach( buildEditor );
     }

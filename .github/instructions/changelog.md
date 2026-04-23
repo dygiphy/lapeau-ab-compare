@@ -9,6 +9,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## 2026-04-03 — v2.0.0 — Transform engine rewrite
+
+### Changed
+- **Complete rewrite of transform engine** (`lpc-editor.js`): Replaced two-component pan model (`object-position` + `translate(%)`) with single CSS `transform: translate(px) rotate(deg) scale(s)`. New rotated-frame constraint maths guarantees 100% container coverage at any rotation/scale/pan combination. Mouse drag maps directly to screen-space pixels. Mouse wheel changed from zoom to rotate. Free rotation (0.5° steps) replaces 90° snap.
+- **PHP render** (`lapeau-ab-compare.php`): `build_img_style()` emits new CSS format. `ajax_save_transform()` accepts `tx`/`ty` (pixel) instead of `offsetX`/`offsetY` (percentage). Legacy data handled gracefully.
+
+### Notes
+- Breaking change: existing saved `offsetX`/`offsetY` transforms render at default position — re-edit and save to apply new model.
+
 ## 2026-04-03 — v1.7.1 — Fix pan at 90°/270° rotation
 
 ### Fixed

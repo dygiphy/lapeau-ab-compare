@@ -131,10 +131,33 @@ Before any release or deployment:
 1. Bump version in `lapeau-ab-compare.php` (plugin header + `VERSION` constant).
 2. Bump `@version` in all 4 asset file headers (lpc-slider.css, lpc-editor.css, lpc-slider.js, lpc-editor.js).
 3. Run `phpcs` for PHP compatibility.
-4. Update `.github/instructions/changelog.md` — **mandatory**.
-5. Commit, push to the `lapeau-ab-compare` GitHub repo.
-6. Update the submodule ref in the parent `lapeau` repo.
-7. Deploy via `ftpsync` from the `lapeau` project root.
+4. **Run E2E tests** (see Testing below).
+5. Update `.github/instructions/changelog.md` — **mandatory**.
+6. Commit, push to the `lapeau-ab-compare` GitHub repo.
+7. Update the submodule ref in the parent `lapeau` repo.
+8. Deploy to production via `ftpsync --list-changes` from the `lapeau` project root.
+
+---
+
+## Testing
+
+This plugin has no dedicated test suite — sliders are verified visually via the lapeau-bookings E2E test run and Playwright MCP.
+
+**After any change**, perform a visual smoke test:
+
+1. Navigate to a page containing a `[lpc_compare]` shortcode (e.g. the Face Lifting page at `http://localhost/lapeau/treatments/face-lifting-firming/`).
+2. Verify the slider drag handle moves and reveals the before/after images correctly.
+3. Log in as an editor and verify the WYSIWYG control panel appears and the zoom/pan/rotate/blur controls respond.
+4. Take a screenshot and confirm no layout regressions.
+
+**Using Playwright MCP:**
+
+```powershell
+# Quick visual check — use mcp_playwright_browser_navigate then mcp_playwright_browser_take_screenshot
+# and mcp_playwright_browser_console_messages to confirm no JS errors.
+```
+
+There is no automated test suite for this plugin because the slider's correctness is entirely visual and depends on drag interaction which is impractical to assert programmatically. Any regression would be caught by the parent site's visual review workflow.
 
 ---
 

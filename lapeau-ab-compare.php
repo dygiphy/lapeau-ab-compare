@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Lapeau A/B Compare
  * Description: Lightweight before/after image comparison slider with inline WYSIWYG positioning editor for logged-in users.
- * Version:     1.7.1
+ * Version:     2.0.0
  * Author:      Dygiphy
  * Text Domain: lapeau-ab-compare
  *
@@ -312,56 +312,52 @@ final class Lapeau_AB_Compare {
      *  1. object-position: (50-X)% (50-Y)% — shifts the visible crop within the
      *     element (zero coverage risk; image always fills the element).
      *  2. transform: translate(X*(scale-1)%, Y*(scale-1)%) scale(s) [rotate] —
-     *     translate uses ONLY scale-induced overhang, so at scale=1 translate=0
-     *     and no background is ever exposed.
+     *     CSS transform order: translate(px) rotate(deg) scale(s).
+     *     CSS reads right-to-left: scale first, then rotate, then translate
+     *     in screen space. Constraint engine in the editor ensures full
+     *     container coverage at any rotation/scale/pan combination.
      *
-     * @param array $t Transform data: scale, offsetX, offsetY, rotate.
+     * @param array $t Transform data: scale, tx, ty, rotate.
      * @return string  CSS declarations string (without surrounding quotes).
      */
     private function build_img_style( array $t ): string {
         if ( empty( $t ) ) {
             return '';
         }
-        $scale   = isset( $t['scale'] )   ? (float) $t['scale']   : 1;
-        $offsetX = isset( $t['offsetX'] ) ? (float) $t['offsetX'] : 0;
-        $offsetY = isset( $t['offsetY'] ) ? (float) $t['offsetY'] : 0;
-        $rotate  = isset( $t['rotate'] )  ? (float) $t['rotate']  : 0;
+        $scale  = isset( $t['scale'] )  ? (float) $t['scale']  : 1;
+        $tx     = isset( $t['tx'] )     ? (float) $t['tx']     : 0;
+        $ty     = isset( $t['ty'] )     ? (float) $t['ty']     : 0;
+        $rotate = isset( $t['rotate'] ) ? (float) $t['rotate'] : 0;
 
-        if ( 1.0 === $scale && 0.0 === $offsetX && 0.0 === $offsetY && 0.0 === $rotate ) {
+        // Legacy: old offsetX/offsetY model had no meaningful tx/ty – treat as zero.
+        if ( ! isset( $t['tx'] ) && isset( $t['offsetX'] ) ) {
+            $tx = 0;
+            $ty = 0;
+        }
+
+        if ( 1.0 === $scale && 0.0 === $tx && 0.0 === $ty && 0.0 === $rotate ) {
             return '';
         }
 
-        $parts = [];
+        // Pan via object-position; scale + rotate via transform.
+        $style = '';
 
-        // 1. object-position: (50-X)% (50-Y)% — intrinsic overflow, no coverage risk.
-        if ( 0.0 !== $offsetX || 0.0 !== $offsetY ) {
-            $parts[] = 'object-position: ' . ( 50.0 - $offsetX ) . '% ' . ( 50.0 - $offsetY ) . '%';
+        $transform_parts = [];
+        if ( abs( $rotate ) > 0.01 ) {
+            $transform_parts[] = 'rotate(' . round( $rotate, 2 ) . 'deg)';
         }
-
-        // 2. transform: translate adds extra pan range at scale > 1.
-        //    At 90°/270° the translate axis is visually perpendicular to its intended
-        //    direction, so it is skipped — object-position handles all pan at those angles.
-        $transforms  = [];
-        $norm_rotate = fmod( fmod( $rotate, 360.0 ) + 360.0, 360.0 );
-        $is_rot90    = ( abs( $norm_rotate - 90.0 ) < 0.5 || abs( $norm_rotate - 270.0 ) < 0.5 );
-        if ( ! $is_rot90 ) {
-            $tx_pct = round( $offsetX * ( $scale - 1.0 ), 3 );
-            $ty_pct = round( $offsetY * ( $scale - 1.0 ), 3 );
-            if ( abs( $tx_pct ) > 0.001 || abs( $ty_pct ) > 0.001 ) {
-                $transforms[] = 'translate(' . $tx_pct . '%, ' . $ty_pct . '%)';
-            }
+        if ( abs( $scale - 1.0 ) > 0.0001 ) {
+            $transform_parts[] = 'scale(' . round( $scale, 4 ) . ')';
         }
-        if ( 1.0 !== $scale ) {
-            $transforms[] = 'scale(' . $scale . ')';
-        }
-        if ( 0.0 !== $rotate ) {
-            $transforms[] = 'rotate(' . $rotate . 'deg)';
-        }
-        if ( ! empty( $transforms ) ) {
-            $parts[] = 'transform: ' . implode( ' ', $transforms );
+        if ( ! empty( $transform_parts ) ) {
+            $style .= 'transform: ' . implode( ' ', $transform_parts ) . '; ';
         }
 
-        return implode( '; ', $parts );
+        if ( abs( $tx ) > 0.01 || abs( $ty ) > 0.01 ) {
+            $style .= 'object-position: calc(50% + ' . round( $tx, 2 ) . 'px) calc(50% + ' . round( $ty, 2 ) . 'px)';
+        }
+
+        return rtrim( $style, '; ' );
     }
 
     /**
@@ -418,10 +414,10 @@ final class Lapeau_AB_Compare {
         }
 
         $all[ $slider_id ][ $side ] = [
-            'scale'   => round( (float) ( $_POST['scale'] ?? 1 ), 4 ),
-            'offsetX' => round( (float) ( $_POST['offsetX'] ?? 0 ), 4 ),
-            'offsetY' => round( (float) ( $_POST['offsetY'] ?? 0 ), 4 ),
-            'rotate'  => round( (float) ( $_POST['rotate'] ?? 0 ), 4 ),
+            'scale'  => round( (float) ( $_POST['scale'] ?? 1 ), 4 ),
+            'tx'     => round( (float) ( $_POST['tx'] ?? 0 ), 2 ),
+            'ty'     => round( (float) ( $_POST['ty'] ?? 0 ), 2 ),
+            'rotate' => round( (float) ( $_POST['rotate'] ?? 0 ), 4 ),
         ];
 
         // Optional image URL replacement.
